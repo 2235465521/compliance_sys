@@ -13,4 +13,25 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://192.168.10.218:8000',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+        rewrite: (path) => {
+          // 确保路径以 /api 开头，然后转发到后端的 /api/...
+          return path;
+        }
+      },
+      // WebSocket（Dify 解析结果推送）同源转发
+      '/ws': {
+        target: 'ws://192.168.10.218:8000',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      }
+    }
+  }
 })
