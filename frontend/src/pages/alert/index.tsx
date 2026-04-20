@@ -12,7 +12,8 @@ import {
   Col,
   Tabs,
   Input,
-  Upload
+  Upload,
+  Empty
 } from 'antd';
 import {
   WarningOutlined,
@@ -21,7 +22,15 @@ import {
   ReloadOutlined,
   SearchOutlined,
   AuditOutlined,
-  UploadOutlined
+  UploadOutlined,
+  CheckCircleOutlined,
+  StopOutlined,
+  QuestionCircleOutlined,
+  RocketOutlined,
+  ApartmentOutlined,
+  BulbOutlined,
+  FileTextOutlined,
+  ThunderboltOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -55,6 +64,63 @@ interface EnterpriseAnalysisResult {
     latest_version?: string;
     repair_suggestion: string;
   }[];
+}
+
+/** 正向引用标准卡片：仅 UI 配色（与状态字段对应） */
+function getForwardRefCardTheme(status: string): {
+  bg: string;
+  border: string;
+  tag: React.ReactNode;
+} {
+  switch (status) {
+    case '废止':
+      return {
+        bg: '#fff1f0',
+        border: '#ffa39e',
+        tag: (
+          <span style={{ color: '#cf1322', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <StopOutlined /> 废止
+          </span>
+        )
+      };
+    case '现行':
+      return {
+        bg: '#f6ffed',
+        border: '#b7eb8f',
+        tag: (
+          <span style={{ color: '#389e0d', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <CheckCircleOutlined /> 现行
+          </span>
+        )
+      };
+    case '即将实施':
+      return {
+        bg: '#fffbe6',
+        border: '#ffe58f',
+        tag: (
+          <span style={{ color: '#d48806', fontSize: 13 }}>
+            <WarningOutlined style={{ marginRight: 4 }} />
+            即将实施
+          </span>
+        )
+      };
+    case '处理中':
+      return {
+        bg: '#e6f7ff',
+        border: '#91d5ff',
+        tag: <span style={{ color: '#0958d9', fontSize: 13 }}>处理中</span>
+      };
+    default:
+      return {
+        bg: '#fafafa',
+        border: '#d9d9d9',
+        tag: (
+          <span style={{ color: '#8c8c8c', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <QuestionCircleOutlined /> 未知
+          </span>
+        )
+      };
+  }
 }
 
 /** 后端预警项常用 create_time，旧代码只读 created_at 会导致「最近」判断永远为假 */
@@ -136,12 +202,95 @@ function filterWarningsMatchingUpload(
   });
 }
 
+/** 反向预警空状态插图（图1风格：检索 + 文档） */
+function ReverseSearchEmptyGraphic() {
+  return (
+    <div
+      style={{
+        width: 132,
+        height: 132,
+        borderRadius: '50%',
+        background: 'radial-gradient(circle at 35% 30%, #3d4a5c 0%, #1f2937 55%, #111827 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        margin: '0 auto 20px',
+        boxShadow: '0 12px 28px rgba(15, 23, 42, 0.18)'
+      }}
+    >
+      <svg width="88" height="88" viewBox="0 0 88 88" fill="none" aria-hidden>
+        <rect x="18" y="22" width="34" height="44" rx="3" fill="#e2e8f0" opacity="0.9" />
+        <rect x="24" y="28" width="22" height="3" rx="1" fill="#94a3b8" />
+        <rect x="24" y="34" width="18" height="3" rx="1" fill="#94a3b8" />
+        <rect x="28" y="18" width="34" height="44" rx="3" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="1.5" />
+        <rect x="34" y="26" width="22" height="2.5" rx="1" fill="#cbd5e1" />
+        <rect x="34" y="32" width="16" height="2.5" rx="1" fill="#cbd5e1" />
+        <circle cx="52" cy="48" r="16" stroke="#0066ff" strokeWidth="3.5" fill="rgba(0,102,255,0.12)" />
+        <line x1="63" y1="59" x2="72" y2="68" stroke="#0066ff" strokeWidth="4" strokeLinecap="round" />
+        <rect x="44" y="40" width="14" height="10" rx="1" fill="#0066ff" opacity="0.85" />
+        <rect x="46" y="42" width="4" height="6" rx="0.5" fill="#fff" opacity="0.9" />
+        <rect x="52" y="44" width="4" height="4" rx="0.5" fill="#fff" opacity="0.7" />
+      </svg>
+    </div>
+  );
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function getFileExtensionUpper(name: string): string {
+  const i = name.lastIndexOf('.');
+  if (i <= 0 || i === name.length - 1) return '';
+  return name.slice(i + 1).toUpperCase();
+}
+
+/** 正向预警空状态插图（图2：上传文档解析） */
+function ForwardUploadEmptyGraphic() {
+  return (
+    <div
+      style={{
+        width: 132,
+        height: 132,
+        borderRadius: '50%',
+        background: 'radial-gradient(circle at 40% 28%, #4c1d95 0%, #5b21b6 45%, #312e81 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        margin: '0 auto 20px',
+        boxShadow: '0 12px 28px rgba(91, 33, 182, 0.22)'
+      }}
+    >
+      <svg width="88" height="88" viewBox="0 0 88 88" fill="none" aria-hidden>
+        <path
+          d="M28 20h26l12 12v36a4 4 0 01-4 4H28a4 4 0 01-4-4V24a4 4 0 014-4z"
+          fill="#faf5ff"
+          stroke="#a78bfa"
+          strokeWidth="1.8"
+        />
+        <path d="M54 20v12h12" fill="#ede9fe" stroke="#a78bfa" strokeWidth="1.8" />
+        <rect x="32" y="40" width="28" height="3" rx="1" fill="#c4b5fd" />
+        <rect x="32" y="48" width="22" height="3" rx="1" fill="#c4b5fd" />
+        <circle cx="48" cy="62" r="14" fill="rgba(124,58,237,0.2)" stroke="#7c3aed" strokeWidth="2.5" />
+        <path d="M44 62l4 4 8-9" stroke="#7c3aed" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
 const AlertPage: React.FC = () => {
   // 使用 Modal hooks 避免上下文警告
   const [modalApi, modalContextHolder] = Modal.useModal();
 
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const wsRef = React.useRef<WebSocket | null>(null);
+  /** 与 setState 不同步：任一路径（WS/HTTP）已给出正向解析最终结果，避免重复「处理完成」弹窗 */
+  const forwardCompletionHandledRef = React.useRef(false);
+  /** 与轮询 interval 同步，便于在 WebSocket 回调里可靠 clearInterval（避免闭包拿到旧的 pollingIntervalId） */
+  const pollingIntervalRef = React.useRef<number | null>(null);
   /** 可选：在 sessionStorage 手动设置 ws_url 时，WebSocket 优先连该地址 */
   const [wsUrlOverride] = useState<string>(() => {
     try {
@@ -505,12 +654,20 @@ const AlertPage: React.FC = () => {
       if (prev) clearInterval(prev);
       return null;
     });
+    pollingIntervalRef.current = null;
+
+    // WebSocket 已先推送并标记完成时，轮询闭包仍可能随后触发，此处直接退出（避免第二次「处理完成」弹窗）
+    if (forwardCompletionHandledRef.current) {
+      console.log('正向结果已由 WebSocket 处理，跳过 HTTP 兜底重复提示');
+      return;
+    }
 
     if (!opts?.skipProcessingCompletedGuard && processingCompleted) {
       console.log('处理已经完成过，不再重复处理');
       return;
     }
 
+    forwardCompletionHandledRef.current = true;
     setProcessingCompleted(true);
 
     const data: any = result.data;
@@ -652,7 +809,7 @@ const AlertPage: React.FC = () => {
 
     modalApi.success({
       title: '处理完成',
-      content: '文件 "' + file.name + '" 解析完成！'
+      content: '文件分析结果已接收！'
     });
   };
 
@@ -671,6 +828,7 @@ const AlertPage: React.FC = () => {
 
     // 重置处理完成状态，准备新的处理流程
     setProcessingCompleted(false);
+    forwardCompletionHandledRef.current = false;
 
     setSearchLoading(true);
     try {
@@ -753,20 +911,24 @@ const AlertPage: React.FC = () => {
           // 检查是否满足轮询条件
           if (!forwardFile) {
             console.log('没有文件，停止轮询');
-            if (pollingIntervalId) {
-              clearInterval(pollingIntervalId);
-              setPollingIntervalId(null);
+            const pid = pollingIntervalRef.current;
+            if (pid != null) {
+              clearInterval(pid);
+              pollingIntervalRef.current = null;
             }
+            setPollingIntervalId(null);
             return;
           }
 
-          // 只有在处理未完成时才继续轮询
-          if (processingCompleted) {
+          // 只有在处理未完成时才继续轮询（用 ref，避免闭包中 processingCompleted 一直为旧值）
+          if (forwardCompletionHandledRef.current) {
             console.log('处理已完成，停止轮询');
-            if (pollingIntervalId) {
-              clearInterval(pollingIntervalId);
-              setPollingIntervalId(null);
+            const pid = pollingIntervalRef.current;
+            if (pid != null) {
+              clearInterval(pid);
+              pollingIntervalRef.current = null;
             }
+            setPollingIntervalId(null);
             return;
           }
 
@@ -788,16 +950,18 @@ const AlertPage: React.FC = () => {
             }
           } catch (error) {
             console.error('轮询结果时出错:', error);
-            // 发生错误时停止轮询
-            if (pollingIntervalId) {
-              clearInterval(pollingIntervalId);
-              setPollingIntervalId(null);
+            const pid = pollingIntervalRef.current;
+            if (pid != null) {
+              clearInterval(pid);
+              pollingIntervalRef.current = null;
             }
+            setPollingIntervalId(null);
           }
         };
 
         // 每5秒轮询一次结果，直到处理完成
         const intervalId = window.setInterval(pollForResult, 5000);
+        pollingIntervalRef.current = intervalId;
         setPollingIntervalId(intervalId);
 
         return; // 退出函数，因为这是异步确认，不是实际结果
@@ -1135,59 +1299,6 @@ const AlertPage: React.FC = () => {
     }
   };
 
-  // 标记预警为已读
-  const markAsRead = async (id: number) => {
-    try {
-      // 根据后端文档 section 5.2，使用标准警告接口标记已读
-      // 由于文档中没有明确的标记已读API，我们暂时使用通用更新接口
-      await axios.patch(`${API_BASE_URL}/warnings/${id}/`, {
-        is_read: true
-      });
-
-      setWarnings(prev => prev.map(warning =>
-        warning.id === id ? { ...warning, status: 'read' } : warning
-      ));
-
-      fetchWarnings();
-    } catch (error) {
-      console.error('标记已读失败:', error);
-      modalApi.error({
-        title: '操作失败',
-        content: '标记预警为已读失败，请稍后重试'
-      });
-    }
-  };
-
-  // 标记所有为已读
-  const markAllAsRead = async () => {
-    try {
-      const unreadIds = warnings
-        .filter(warning => warning.status === 'unread')
-        .map(warning => warning.id);
-
-      for (const id of unreadIds) {
-        await axios.patch(`${API_BASE_URL}/warnings/${id}/`, { is_read: true });
-      }
-
-      setWarnings(prev => prev.map(warning =>
-        warning.status === 'unread' ? { ...warning, status: 'read' } : warning
-      ));
-
-      fetchWarnings();
-
-      modalApi.success({
-        title: '操作成功',
-        content: '所有预警已标记为已读'
-      });
-    } catch (error) {
-      console.error('标记所有已读失败:', error);
-      modalApi.error({
-        title: '操作失败',
-        content: '标记所有预警为已读失败，请稍后重试'
-      });
-    }
-  };
-
   // 预警类型映射
   const getWarningTypeTag = (type: string) => {
     switch (type) {
@@ -1199,20 +1310,6 @@ const AlertPage: React.FC = () => {
         return <Tag color="volcano">要求变更</Tag>;
       default:
         return <Tag color="default">其他</Tag>;
-    }
-  };
-
-  // 状态映射
-  const getStatusTag = (status: string) => {
-    switch (status) {
-      case 'unread':
-        return <Tag color="blue">未读</Tag>;
-      case 'read':
-        return <Tag color="green">已读</Tag>;
-      case 'resolved':
-        return <Tag color="gray">已解决</Tag>;
-      default:
-        return <Tag color="default">{status}</Tag>;
     }
   };
 
@@ -1239,13 +1336,6 @@ const AlertPage: React.FC = () => {
       )
     },
     {
-      title: '状态',
-      dataIndex: 'status',
-      key: 'status',
-      width: 80,
-      render: (status: string) => getStatusTag(status)
-    },
-    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
@@ -1255,79 +1345,18 @@ const AlertPage: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 100,
       render: (_: any, record: WarningItem) => (
-        <Space>
-          <Button
-            type="link"
-            icon={<EyeOutlined />}
-            onClick={() => {
-              setSelectedWarning(record);
-              setModalVisible(true);
-            }}
-          >
-            查看
-          </Button>
-          {record.status === 'unread' && (
-            <Button
-              type="link"
-              size="small"
-              onClick={() => markAsRead(record.id)}
-            >
-              标记已读
-            </Button>
-          )}
-        </Space>
-      )
-    }
-  ];
-
-  // 正向预警表格列配置（企标 -> 国标）
-  const forwardWarningColumns = [
-    {
-      title: '企标分析结果',
-      key: 'analysis_result',
-      render: (_: any, record: EnterpriseAnalysisResult) => (
-        <div>
-          <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-            解析企标: {record.enterprise_standard} 发布于: {record.publish_date}
-          </div>
-          <div>
-            {record.referenced_standards && record.referenced_standards.length > 0 ? (
-              record.referenced_standards.map((ref, index) => (
-                <div key={`${record.id}-${index}`} style={{ marginBottom: '12px', borderBottom: '1px solid #eee', paddingBottom: '8px' }}>
-                  <div><strong>{ref.standard_code}</strong></div>
-                  <div style={{ marginLeft: '20px', fontSize: '12px', color: '#666' }}>
-                    大模型提取: {ref.extracted_info}
-                  </div>
-                  <div style={{ marginLeft: '20px', fontSize: '12px', color: '#666' }}>
-                    系统匹配溯源: {ref.matched_trace}
-                  </div>
-                  <div style={{ marginLeft: '20px', marginTop: '4px' }}>
-                    {ref.status === '废止' ? (
-                      <span style={{ color: 'red' }}>废止</span>
-                    ) : (
-                      <span style={{ color: 'green' }}>{ref.status}</span>
-                    )}
-                    {ref.latest_version && (
-                      <span> 修复建议: 请将该标准替换为现行/即将实施的最新版{ref.latest_version}</span>
-                    )}
-                    {!ref.latest_version && ref.status === '废止' && (
-                      <span> 修复建议: 请将该标准替换为现行/即将实施的最新版暂无最新现行版本</span>
-                    )}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div style={{ padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-                <div style={{ color: '#666', fontStyle: 'italic' }}>暂无引用标准信息</div>
-                <div style={{ marginTop: '8px', fontSize: '12px', color: '#888' }}>
-                  文件中未识别到有效的标准引用信息，或该企业标准未引用其他国家标准。
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            setSelectedWarning(record);
+            setModalVisible(true);
+          }}
+        >
+          查看
+        </Button>
       )
     }
   ];
@@ -1501,19 +1530,18 @@ const AlertPage: React.FC = () => {
 
   // 处理WebSocket接收到的DIFY结果
   const handleDifyResults = (resultData: any) => {
-    // 检查是否已经处理过，避免重复显示弹窗
-    if (processingCompleted) {
+    if (forwardCompletionHandledRef.current) {
       return;
     }
-
-    // 标记为已处理，防止重复弹窗
+    forwardCompletionHandledRef.current = true;
     setProcessingCompleted(true);
 
-    // 停止任何正在进行的轮询
-    if (pollingIntervalId) {
-      clearInterval(pollingIntervalId);
-      setPollingIntervalId(null);
+    const pid = pollingIntervalRef.current;
+    if (pid != null) {
+      clearInterval(pid);
+      pollingIntervalRef.current = null;
     }
+    setPollingIntervalId(null);
 
     console.log('处理DIFY结果:', resultData);
 
@@ -1639,107 +1667,719 @@ const AlertPage: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '24px', background: '#f5f5f5', minHeight: '100vh' }}>
-      <Card>
-        {/* 顶部标题 */}
-        <Row justify="space-between" align="middle" style={{ marginBottom: '24px' }}>
-          <Col>
-            <Title level={3} style={{ margin: 0 }}>
-              <BellOutlined /> 预警系统
-            </Title>
-            <Text type="secondary">
-              实时监控企业标准与国家标准的合规性变化
-            </Text>
-          </Col>
-          <Col>
-            <Space>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={fetchWarnings}
-                disabled={loading}
-              >
-                刷新
-              </Button>
-              <Button
-                type="primary"
-                icon={<AuditOutlined />}
-                onClick={triggerActiveScan}
-              >
-                主动巡检
-              </Button>
-            </Space>
-          </Col>
-        </Row>
+    <div
+      style={{
+        minHeight: '100vh',
+        padding: '20px 20px 40px',
+        background: 'linear-gradient(180deg, #e8f0fe 0%, #f0f5ff 18%, #f5f5f5 45%, #fafafa 100%)'
+      }}
+    >
+      <div style={{ maxWidth: 1180, margin: '0 auto' }}>
+        <Card
+          bordered={false}
+          style={{
+            marginBottom: 20,
+            borderRadius: 12,
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06)',
+            overflow: 'hidden'
+          }}
+          styles={{ body: { padding: 0 } }}
+        >
+          <div
+            style={{
+              padding: '22px 24px 20px',
+              background: 'linear-gradient(135deg, #f0f5ff 0%, #ffffff 42%, #faf5ff 100%)',
+              borderBottom: '1px solid rgba(22, 119, 255, 0.08)'
+            }}
+          >
+            <Row justify="space-between" align="middle" gutter={[16, 16]}>
+              <Col xs={24} lg={14}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 12,
+                      background: 'linear-gradient(145deg, #1677ff 0%, #4096ff 100%)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#fff',
+                      fontSize: 22,
+                      flexShrink: 0,
+                      boxShadow: '0 4px 12px rgba(22, 119, 255, 0.35)'
+                    }}
+                  >
+                    <BellOutlined />
+                  </div>
+                  <div>
+                    <Title level={3} style={{ margin: '0 0 6px' }}>
+                      预警系统
+                    </Title>
+                    <Text type="secondary" style={{ fontSize: 14 }}>
+                      实时监控企业标准与国家标准的合规性变化
+                    </Text>
+                  </div>
+                </div>
+              </Col>
+              <Col xs={24} lg={10} style={{ textAlign: 'right' }}>
+                <Space wrap>
+                  {activeTab === 'alert-list' && (
+                    <Button
+                      icon={<ReloadOutlined />}
+                      onClick={fetchWarnings}
+                      disabled={loading}
+                    >
+                      刷新
+                    </Button>
+                  )}
+                  <Button
+                    type="primary"
+                    icon={<AuditOutlined />}
+                    onClick={triggerActiveScan}
+                  >
+                    主动巡检
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+          </div>
+        </Card>
 
         {/* 搜索区域 - 分别为反向预警和正向预警 */}
-        <Card style={{ marginBottom: '24px' }}>
+        <Card
+          style={{
+            marginBottom: 20,
+            borderRadius: 12,
+            boxShadow: '0 1px 2px rgba(15, 23, 42, 0.05)'
+          }}
+          styles={{ body: { paddingTop: 12, paddingBottom: 24 } }}
+        >
           <Tabs
             activeKey={activeTab}
             onChange={setActiveTab}
+            tabBarStyle={{
+              marginBottom: 16,
+              paddingLeft: 4,
+              fontWeight: 500
+            }}
             items={[
               {
                 key: 'reverse-alert',
                 label: '反向预警',
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} sm={16}>
-                      <Input
-                        placeholder="请输入国标编号，例如：GB/T 9989.3-2015"
-                        value={reverseSearchTerm}
-                        onChange={(e) => setReverseSearchTerm(e.target.value)}
-                        onPressEnter={searchReverseAlert}
-                        prefix={<SearchOutlined />}
-                      />
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Button
-                        type="primary"
-                        icon={<SearchOutlined />}
-                        onClick={searchReverseAlert}
-                        loading={searchLoading}
-                        block
+                  <div style={{ marginTop: 4 }}>
+                    <div
+                      style={{
+                        background: '#fff',
+                        borderRadius: 20,
+                        boxShadow: '0 8px 32px rgba(15, 23, 42, 0.08)',
+                        padding: '28px 28px 24px',
+                        border: '1px solid rgba(15, 23, 42, 0.06)'
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 14,
+                          alignItems: 'stretch',
+                          flexWrap: 'wrap'
+                        }}
                       >
-                        查询关联企标
-                      </Button>
-                    </Col>
-                  </Row>
+                        <Input
+                          size="large"
+                          placeholder="请输入国标编号，例如：GB/T 9989.3-2015"
+                          value={reverseSearchTerm}
+                          onChange={(e) => setReverseSearchTerm(e.target.value)}
+                          onPressEnter={searchReverseAlert}
+                          prefix={<SearchOutlined style={{ color: '#8c8c8c' }} />}
+                          variant="borderless"
+                          style={{
+                            flex: '1 1 280px',
+                            minHeight: 46,
+                            background: '#f0f2f5',
+                            borderRadius: 999,
+                            paddingLeft: 18,
+                            paddingRight: 18,
+                            fontSize: 15
+                          }}
+                        />
+                        <Button
+                          type="primary"
+                          size="large"
+                          onClick={searchReverseAlert}
+                          loading={searchLoading}
+                          style={{
+                            flex: '0 1 auto',
+                            minWidth: 168,
+                            height: 46,
+                            fontSize: 15,
+                            fontWeight: 600,
+                            borderRadius: 999,
+                            background: '#0066ff',
+                            border: 'none',
+                            boxShadow: '0 6px 18px rgba(0, 102, 255, 0.35)'
+                          }}
+                        >
+                          查询关联企标
+                        </Button>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 22,
+                          background: '#f0f2f5',
+                          borderRadius: 16,
+                          padding:
+                            searchLoading || !reverseAlertDetails ? '40px 24px 36px' : 20,
+                          minHeight: 320,
+                          boxSizing: 'border-box'
+                        }}
+                      >
+                        {searchLoading ? (
+                          <div style={{ textAlign: 'center', padding: '48px 16px' }}>
+                            <Spin size="large" />
+                            <div style={{ marginTop: 16, color: '#595959' }}>正在分析预警信息...</div>
+                          </div>
+                        ) : !reverseAlertDetails ? (
+                          <div style={{ textAlign: 'center', maxWidth: 520, margin: '0 auto' }}>
+                            <ReverseSearchEmptyGraphic />
+                            <div
+                              style={{
+                                fontSize: 17,
+                                fontWeight: 700,
+                                color: '#262626',
+                                marginBottom: 10
+                              }}
+                            >
+                              暂无查询结果
+                            </div>
+                            <div style={{ fontSize: 14, color: '#8c8c8c', lineHeight: 1.65 }}>
+                              请在上方输入准确的国标编号开始检索。系统将自动匹配最新数据库中的关联信息。
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div
+                              style={{
+                                border: '1px solid #ffd591',
+                                background: '#fff7e6',
+                                borderRadius: 8,
+                                padding: '16px 20px'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  marginBottom: 12
+                                }}
+                              >
+                                <WarningOutlined style={{ fontSize: 22, color: '#d46b08' }} />
+                                <Text strong style={{ fontSize: 16, color: '#d46b08' }}>
+                                  发现底层引用标准变更
+                                </Text>
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    您查询的旧版标准
+                                  </Text>
+                                  <div>
+                                    <Text strong>{reverseAlertDetails.oldStandard}</Text>
+                                  </div>
+                                </div>
+                                <div>
+                                  <Text type="secondary" style={{ fontSize: 12 }}>
+                                    最新替代标准
+                                  </Text>
+                                  <div>
+                                    <Text strong style={{ color: '#722ed1' }}>
+                                      {reverseAlertDetails.newStandard}
+                                    </Text>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <Text strong style={{ fontSize: 14 }}>
+                              受影响企业标准
+                            </Text>
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 12,
+                                maxHeight: 480,
+                                overflowY: 'auto',
+                                paddingRight: 4
+                              }}
+                            >
+                              {reverseAlertDetails.affectedEnterprises.length === 0 ? (
+                                <Empty
+                                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                  description="暂无关联企业标准"
+                                />
+                              ) : (
+                                reverseAlertDetails.affectedEnterprises.map(
+                                  (enterprise_bz: string, index: number) => (
+                                    <div
+                                      key={index}
+                                      style={{
+                                        border: '1px solid #bae7ff',
+                                        background: '#e6f7ff',
+                                        borderRadius: 8,
+                                        padding: '14px 16px'
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          fontWeight: 600,
+                                          marginBottom: 8,
+                                          fontSize: 15
+                                        }}
+                                      >
+                                        {enterprise_bz}
+                                      </div>
+                                      <Text type="secondary" style={{ fontSize: 13 }}>
+                                        企业标准 <Text strong>{enterprise_bz}</Text> 引用的国标{' '}
+                                        {reverseAlertDetails.oldStandard} 已被最新标准{' '}
+                                        {reverseAlertDetails.newStandard} 替代，请及时通知相关方。
+                                      </Text>
+                                    </div>
+                                  )
+                                )
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 22,
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 10
+                        }}
+                      >
+                        <Text style={{ fontSize: 14, color: '#595959', fontWeight: 500 }}>
+                          常用操作：
+                        </Text>
+                        {[
+                          {
+                            icon: (
+                              <CheckCircleOutlined style={{ color: '#0066ff', fontSize: 15 }} />
+                            ),
+                            label: '支持 GB / GB/T 等编号'
+                          },
+                          {
+                            icon: (
+                              <ApartmentOutlined style={{ color: '#0066ff', fontSize: 15 }} />
+                            ),
+                            label: '企标关联追溯'
+                          },
+                          {
+                            icon: <BulbOutlined style={{ color: '#0066ff', fontSize: 15 }} />,
+                            label: '替代标准提示'
+                          }
+                        ].map((op) => (
+                          <div
+                            key={op.label}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '8px 16px',
+                              background: '#f0f2f5',
+                              borderRadius: 999,
+                              fontSize: 13,
+                              color: '#434343'
+                            }}
+                          >
+                            {op.icon}
+                            {op.label}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 )
               },
               {
                 key: 'forward-alert',
                 label: '正向预警',
                 children: (
-                  <Row gutter={[16, 16]}>
-                    <Col xs={24} sm={16}>
-                      <Dragger
-                        name="file"
-                        accept=".pdf,.doc,.docx"
-                        multiple={false}
-                        onChange={handleFileChange}
-                        beforeUpload={() => false} // 阻止自动上传
+                  <div style={{ marginTop: 4 }}>
+                    <div
+                      style={{
+                        background: '#fff',
+                        borderRadius: 20,
+                        boxShadow: '0 8px 32px rgba(15, 23, 42, 0.08)',
+                        padding: '28px 28px 24px',
+                        border: '1px solid rgba(15, 23, 42, 0.06)'
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 14,
+                          alignItems: 'stretch',
+                          flexWrap: 'wrap'
+                        }}
                       >
-                        <p className="ant-upload-drag-icon">
-                          <UploadOutlined />
-                        </p>
-                        <p className="ant-upload-text">点击或拖拽文件到此处上传企标文件</p>
-                        <p className="ant-upload-hint">
-                          支持单个文件上传，格式支持 PDF、Word 等，系统将自动分析文件中的引用标准
-                        </p>
-                      </Dragger>
-                    </Col>
-                    <Col xs={24} sm={8}>
-                      <Button
-                        type="primary"
-                        icon={<SearchOutlined />}
-                        onClick={searchForwardAlert}
-                        loading={searchLoading}
-                        disabled={!forwardFile}
-                        block
+                        <div
+                          style={{
+                            flex: '1 1 300px',
+                            minWidth: 0,
+                            borderRadius: 16,
+                            overflow: 'hidden',
+                            background: '#f0f2f5',
+                            border: forwardFile ? '1px solid #c4b5fd' : '1px dashed #d0d7de',
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          {!forwardFile ? (
+                            <Dragger
+                              name="file"
+                              accept=".pdf,.doc,.docx"
+                              multiple={false}
+                              onChange={handleFileChange}
+                              beforeUpload={() => false} // 阻止自动上传
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                borderRadius: 16
+                              }}
+                            >
+                              <p className="ant-upload-drag-icon" style={{ marginBottom: 8 }}>
+                                <UploadOutlined style={{ fontSize: 42, color: '#7c3aed' }} />
+                              </p>
+                              <p className="ant-upload-text" style={{ fontSize: 15, fontWeight: 500 }}>
+                                点击或拖拽文件到此处上传企标文件
+                              </p>
+                              <p className="ant-upload-hint" style={{ fontSize: 13, padding: '0 12px' }}>
+                                支持单个文件上传，格式支持 PDF、Word 等，系统将自动分析文件中的引用标准
+                              </p>
+                            </Dragger>
+                          ) : (
+                            <div
+                              style={{
+                                padding: '22px 20px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 16,
+                                minHeight: 152,
+                                boxSizing: 'border-box'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: 56,
+                                  height: 56,
+                                  borderRadius: 14,
+                                  background: '#ede9fe',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0
+                                }}
+                              >
+                                <FileTextOutlined style={{ fontSize: 28, color: '#7c3aed' }} />
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <Text
+                                  strong
+                                  style={{ fontSize: 15, display: 'block', color: '#262626' }}
+                                  ellipsis={{ tooltip: forwardFile.name }}
+                                >
+                                  {forwardFile.name}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: 13, marginTop: 6, display: 'block' }}>
+                                  {[formatFileSize(forwardFile.size), getFileExtensionUpper(forwardFile.name)]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </Text>
+                                <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
+                                  已选择文件，可点击「分析预警内容」开始解析
+                                </Text>
+                              </div>
+                              <Button type="link" size="small" onClick={() => setForwardFile(null)} style={{ flexShrink: 0 }}>
+                                重新选择
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 10,
+                            flex: '0 0 auto',
+                            minWidth: 168
+                          }}
+                        >
+                          <Button
+                            type={forwardFile ? 'primary' : 'default'}
+                            size="large"
+                            icon={<RocketOutlined />}
+                            onClick={searchForwardAlert}
+                            loading={searchLoading}
+                            disabled={!forwardFile}
+                            block
+                            style={
+                              forwardFile
+                                ? {
+                                    height: 46,
+                                    fontSize: 15,
+                                    fontWeight: 600,
+                                    border: 'none',
+                                    borderRadius: 999,
+                                    background:
+                                      'linear-gradient(135deg, #7c3aed 0%, #8b5cf6 50%, #a78bfa 100%)',
+                                    boxShadow: '0 6px 18px rgba(124, 58, 237, 0.38)'
+                                  }
+                                : {
+                                    height: 46,
+                                    fontSize: 15,
+                                    fontWeight: 600,
+                                    borderRadius: 999
+                                  }
+                            }
+                          >
+                            分析预警内容
+                          </Button>
+                          <Button
+                            icon={<ReloadOutlined />}
+                            onClick={checkProcessingResult}
+                            disabled={searchLoading}
+                            block
+                            style={{ height: 40, borderRadius: 999 }}
+                          >
+                            检查结果
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 22,
+                          background: '#f0f2f5',
+                          borderRadius: 16,
+                          padding:
+                            searchLoading || forwardWarnings.length === 0
+                              ? '40px 24px 36px'
+                              : 20,
+                          minHeight: 320,
+                          boxSizing: 'border-box'
+                        }}
                       >
-                        分析预警内容
-                      </Button>
-                    </Col>
-                  </Row>
+                        {searchLoading ? (
+                          <div style={{ textAlign: 'center', padding: '48px 16px' }}>
+                            <Spin size="large" />
+                            <div style={{ marginTop: 16, color: '#595959' }}>正在分析企标文件...</div>
+                          </div>
+                        ) : forwardWarnings.length === 0 ? (
+                          <div style={{ textAlign: 'center', maxWidth: 520, margin: '0 auto' }}>
+                            <ForwardUploadEmptyGraphic />
+                            <div
+                              style={{
+                                fontSize: 17,
+                                fontWeight: 700,
+                                color: '#262626',
+                                marginBottom: 10
+                              }}
+                            >
+                              暂无分析结果
+                            </div>
+                            <div style={{ fontSize: 14, color: '#8c8c8c', lineHeight: 1.65 }}>
+                              请在上方上传企标文件并点击「分析预警内容」。系统将自动解析引用国标并与最新库匹配预警信息。
+                            </div>
+                          </div>
+                        ) : (
+                          forwardWarnings.map((record) => (
+                            <div key={record.id} style={{ marginTop: 8 }}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  flexWrap: 'wrap',
+                                  gap: 12,
+                                  marginBottom: 16,
+                                  paddingBottom: 12,
+                                  borderBottom: '1px solid #e8e8e8'
+                                }}
+                              >
+                                <div>
+                                  <Text type="secondary">解析企标</Text>
+                                  <Text strong style={{ fontSize: 16, color: '#722ed1', marginLeft: 8 }}>
+                                    {record.enterprise_standard}
+                                  </Text>
+                                  <Text type="secondary" style={{ marginLeft: 16 }}>
+                                    发布日期 {record.publish_date}
+                                  </Text>
+                                </div>
+                              </div>
+                              {record.referenced_standards && record.referenced_standards.length > 0 ? (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 12,
+                                    maxHeight: 520,
+                                    overflowY: 'auto',
+                                    paddingRight: 4
+                                  }}
+                                >
+                                  {record.referenced_standards.map((ref, index) => {
+                                    const theme = getForwardRefCardTheme(ref.status);
+                                    const repairFromLatest = ref.latest_version
+                                      ? `请将该标准替换为现行/即将实施的最新版 ${ref.latest_version}`
+                                      : '';
+                                    const repairObsoleteFallback =
+                                      !ref.latest_version && ref.status === '废止'
+                                        ? '请将该标准替换为现行/即将实施的最新版（暂无最新现行版本）'
+                                        : '';
+                                    const repairBody =
+                                      ref.repair_suggestion && ref.repair_suggestion !== '暂无修复建议'
+                                        ? ref.repair_suggestion
+                                        : repairFromLatest || repairObsoleteFallback;
+                                    const showRepair =
+                                      ref.status === '废止' ||
+                                      Boolean(ref.latest_version) ||
+                                      (ref.repair_suggestion &&
+                                        ref.repair_suggestion !== '暂无修复建议');
+
+                                    return (
+                                      <div
+                                        key={`${record.id}-${index}`}
+                                        style={{
+                                          background: theme.bg,
+                                          border: `1px solid ${theme.border}`,
+                                          borderRadius: 8,
+                                          padding: '14px 16px'
+                                        }}
+                                      >
+                                        <div
+                                          style={{
+                                            display: 'flex',
+                                            justifyContent: 'space-between',
+                                            alignItems: 'flex-start',
+                                            gap: 12
+                                          }}
+                                        >
+                                          <Text strong style={{ fontSize: 15 }}>
+                                            {ref.standard_code}
+                                          </Text>
+                                          {theme.tag}
+                                        </div>
+                                        <div style={{ marginTop: 10 }}>
+                                          <Text type="secondary" style={{ fontSize: 13, display: 'block' }}>
+                                            大模型提取：{ref.extracted_info}
+                                          </Text>
+                                          <Text
+                                            type="secondary"
+                                            style={{ fontSize: 13, display: 'block', marginTop: 4 }}
+                                          >
+                                            系统匹配溯源：{ref.matched_trace}
+                                          </Text>
+                                        </div>
+                                        {showRepair && repairBody && (
+                                          <div
+                                            style={{
+                                              marginTop: 12,
+                                              padding: '10px 12px',
+                                              background: '#fff',
+                                              borderRadius: 6,
+                                              border: `1px solid ${theme.border}`
+                                            }}
+                                          >
+                                            <Text strong style={{ color: '#cf1322', fontSize: 12 }}>
+                                              修复建议
+                                            </Text>
+                                            <div style={{ marginTop: 6, fontSize: 13, color: '#595959' }}>
+                                              {repairBody}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div
+                                  style={{
+                                    padding: 20,
+                                    background: '#fafafa',
+                                    border: '1px solid #d9d9d9',
+                                    borderRadius: 8
+                                  }}
+                                >
+                                  <Text type="secondary">暂无引用标准信息</Text>
+                                  <div style={{ marginTop: 8, fontSize: 13, color: '#8c8c8c' }}>
+                                    文件中未识别到有效的标准引用信息，或该企业标准未引用其他国家标准。
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 22,
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                          gap: 10
+                        }}
+                      >
+                        <Text style={{ fontSize: 14, color: '#595959', fontWeight: 500 }}>
+                          常用操作：
+                        </Text>
+                        {[
+                          {
+                            icon: (
+                              <FileTextOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
+                            ),
+                            label: '支持 PDF / Word 格式'
+                          },
+                          {
+                            icon: (
+                              <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
+                            ),
+                            label: '引用标准智能解析'
+                          },
+                          {
+                            icon: (
+                              <ApartmentOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
+                            ),
+                            label: '废止与替代追溯'
+                          }
+                        ].map((op) => (
+                          <div
+                            key={op.label}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '8px 16px',
+                              background: '#f0f2f5',
+                              borderRadius: 999,
+                              fontSize: 13,
+                              color: '#434343'
+                            }}
+                          >
+                            {op.icon}
+                            {op.label}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 )
               },
               {
@@ -1748,21 +2388,12 @@ const AlertPage: React.FC = () => {
                 children: (
                   <div>
                     <div style={{ marginBottom: '16px', textAlign: 'right' }}>
-                      <Space>
-                        <Button
-                          icon={<AuditOutlined />}
-                          onClick={triggerActiveScan}
-                        >
-                          主动巡检
-                        </Button>
-                        <Button
-                          type="primary"
-                          onClick={markAllAsRead}
-                          disabled={warnings.filter(w => w.status === 'unread').length === 0}
-                        >
-                          全部标记已读
-                        </Button>
-                      </Space>
+                      <Button
+                        icon={<AuditOutlined />}
+                        onClick={triggerActiveScan}
+                      >
+                        主动巡检
+                      </Button>
                     </div>
 
                     {loading ? (
@@ -1790,80 +2421,7 @@ const AlertPage: React.FC = () => {
             ]}
           />
         </Card>
-
-        {/* 结果展示区域 - 根据当前选择的tab显示对应的结果 */}
-        {activeTab === 'reverse-alert' && (
-          <Card title="反向预警结果" style={{ marginTop: '16px' }}>
-            {searchLoading ? (
-              <div style={{ textAlign: 'center', padding: '48px', marginTop: '16px' }}>
-                <Spin size="large" />
-                <div style={{ marginTop: '16px' }}>正在分析预警信息...</div>
-              </div>
-            ) : (
-              <>
-                {reverseAlertDetails && (
-                  <div style={{ padding: '16px', background: '#fff', border: '1px solid #ddd', borderRadius: '4px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '12px' }}>
-                      <WarningOutlined style={{ fontSize: '24px', color: '#ff6b35', marginRight: '8px' }} />
-                      <h3 style={{ color: '#ff6b35', margin: 0 }}>发现底层引用标准变更!</h3>
-                    </div>
-                    <p><strong>您查询的旧版标准:</strong> {reverseAlertDetails.oldStandard}</p>
-                    <p><strong>最新替代标准为:</strong> {reverseAlertDetails.newStandard}</p>
-                    <p><strong>受影响的企业标准清单:</strong></p>
-                    <ul>
-                      {reverseAlertDetails.affectedEnterprises.map((enterprise_bz: string, index: number) => (
-                        <li key={index}>
-                          注意:企业标准 <strong>{enterprise_bz}</strong> 引用的国标{reverseAlertDetails.oldStandard}已经被最新标准{reverseAlertDetails.newStandard}替代，请及时通知!
-                        </li>
-                      ))}
-                      {reverseAlertDetails.affectedEnterprises.length === 0 && (
-                        <li>暂无关联企业标准</li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </>
-            )}
-          </Card>
-        )}
-
-        {activeTab === 'forward-alert' && (
-          <Card
-            title="正向预警结果"
-            style={{ marginTop: '16px' }}
-            extra={
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={checkProcessingResult}
-                disabled={searchLoading}
-              >
-                检查结果
-              </Button>
-            }
-          >
-            {searchLoading ? (
-              <div style={{ textAlign: 'center', padding: '48px', marginTop: '16px' }}>
-                <Spin size="large" />
-                <div style={{ marginTop: '16px' }}>正在分析企标文件...</div>
-              </div>
-            ) : (
-              <Table
-                dataSource={forwardWarnings}
-                columns={forwardWarningColumns}
-                rowKey="id"
-                pagination={{
-                  pageSize: 10,
-                  showSizeChanger: true,
-                  showQuickJumper: true,
-                  showTotal: (total) => '共 ' + total + ' 条预警结果'
-                }}
-                scroll={{ x: 800 }}
-                style={{ marginTop: '16px' }}
-              />
-            )}
-          </Card>
-        )}
-      </Card>
+      </div>
 
       {/* 通用预警详情模态框 */}
       <Modal
@@ -1878,19 +2436,7 @@ const AlertPage: React.FC = () => {
         footer={[
           <Button key="close" onClick={() => setModalVisible(false)}>
             关闭
-          </Button>,
-          selectedWarning?.status === 'unread' && (
-            <Button
-              key="mark-read"
-              type="primary"
-              onClick={() => {
-                markAsRead(selectedWarning.id);
-                setModalVisible(false);
-              }}
-            >
-              标记为已读
-            </Button>
-          )
+          </Button>
         ]}
         width={800}
       >
@@ -1906,7 +2452,6 @@ const AlertPage: React.FC = () => {
                 <strong>企业标准:</strong> {selectedWarning.enterprise_bz_id}<br />
                 <strong>关联国家标准:</strong> {selectedWarning.national_bz_id}<br />
                 <strong>类型:</strong> {getWarningTypeTag(selectedWarning.warning_type).props.children}<br />
-                <strong>状态:</strong> {getStatusTag(selectedWarning.status).props.children}<br />
                 <strong>创建时间:</strong> {new Date(selectedWarning.created_at).toLocaleString()}<br />
                 <strong>更新时间:</strong> {new Date(selectedWarning.updated_at).toLocaleString()}
               </Text>
