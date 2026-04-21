@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card,
-  Table,
   Button,
   Space,
   Tag,
@@ -13,12 +12,14 @@ import {
   Tabs,
   Input,
   Upload,
-  Empty
+  Empty,
+  DatePicker,
+  Select,
+  Pagination
 } from 'antd';
 import {
   WarningOutlined,
   BellOutlined,
-  EyeOutlined,
   ReloadOutlined,
   SearchOutlined,
   AuditOutlined,
@@ -30,9 +31,12 @@ import {
   ApartmentOutlined,
   BulbOutlined,
   FileTextOutlined,
-  ThunderboltOutlined
+  ThunderboltOutlined,
+  DownloadOutlined,
+  RightOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import type { Dayjs } from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Dragger } = Upload;
@@ -49,6 +53,24 @@ interface WarningItem {
   title: string;
   description: string;
   related_standards?: string[];
+}
+
+/**
+ * 自动正向预警列表行（后端遍历数据库中的企标，输出对应国标情况；与 GET /warnings/forward-auto-list 对齐）
+ */
+interface ForwardAutoAlertRow {
+  id: string | number;
+  /** 列表「状态」列：即将实施 | 已实施 | 观察中等 */
+  display_status: string;
+  /** 内容区前缀文案，如「正向关联预警:」「国标状态:」 */
+  label: string;
+  /** 企标侧展示（旧/对照侧） */
+  enterprise_standard_text: string;
+  /** 国标情况展示（新/说明侧） */
+  national_standard_text: string;
+  created_at: string;
+  /** 兼容旧详情弹窗 */
+  legacyWarning?: WarningItem;
 }
 
 // 企标分析结果类型
@@ -182,6 +204,106 @@ function warningItemSearchBlob(item: Record<string, unknown>): string {
     .toLowerCase();
   if (!core) return '';
   return `${core} ${core.replace(/\//g, '_')} ${core.replace(/_/g, '/')}`;
+}
+
+/** 将 GET /warnings/forward-auto-list 单条记录规范为列表行（后端字段可增减，此处做宽松兼容） */
+function normalizeForwardAutoItem(raw: Record<string, unknown>): ForwardAutoAlertRow {
+  const rawId = raw.id ?? raw.pk ?? String(Math.random());
+  const id: string | number =
+    typeof rawId === 'string' || typeof rawId === 'number' ? rawId : String(rawId);
+  const display_status = String(
+    raw.display_status ?? raw.status_label ?? raw.gb_status ?? '观察中'
+  );
+  const label = String(
+    raw.label ?? raw.content_label ?? raw.warning_label ?? '正向关联预警:'
+  );
+  const enterprise_standard_text = String(
+    raw.enterprise_standard_text ??
+      raw.quote_bz ??
+      raw.enterprise_bz ??
+      raw.enterprise_bz_id ??
+      raw.old_text ??
+      '—'
+  );
+  const national_standard_text = String(
+    raw.national_standard_text ??
+      raw.new_bz_id ??
+      raw.gb_summary ??
+      raw.gb_status_detail ??
+      raw.national_bz_id ??
+      '—'
+  );
+  const created_at = String(raw.created_at ?? raw.create_time ?? new Date().toISOString());
+  return {
+    id,
+    display_status,
+    label,
+    enterprise_standard_text,
+    national_standard_text,
+    created_at
+  };
+}
+
+function warningItemToForwardRow(w: WarningItem): ForwardAutoAlertRow {
+  return {
+    id: w.id,
+    display_status:
+      w.warning_type === 'obsolete_standard'
+        ? '已实施'
+        : w.warning_type === 'upcoming_implementation'
+          ? '即将实施'
+          : '观察中',
+    label: '标准冲突预警:',
+    enterprise_standard_text: w.enterprise_bz_id,
+    national_standard_text: w.national_bz_id,
+    created_at: w.created_at,
+    legacyWarning: w
+  };
+}
+
+function forwardRowToWarningItem(r: ForwardAutoAlertRow): WarningItem {
+  if (r.legacyWarning) return r.legacyWarning;
+  const idNum = typeof r.id === 'number' ? r.id : parseInt(String(r.id), 10) || 0;
+  return {
+    id: idNum,
+    enterprise_bz_id: r.enterprise_standard_text,
+    national_bz_id: r.national_standard_text,
+    warning_type: 'other',
+    status: 'read',
+    created_at: r.created_at,
+    updated_at: r.created_at,
+    title: `${r.label} ${r.enterprise_standard_text} → ${r.national_standard_text}`,
+    description: `${r.label} 企标：${r.enterprise_standard_text}；国标情况：${r.national_standard_text}`,
+    related_standards: [r.enterprise_standard_text, r.national_standard_text]
+  };
+}
+
+/** 预警列表「状态」徽章配色（与设计稿一致） */
+function getListStatusTag(status: string): React.ReactNode {
+  const s = status.trim();
+  if (s.includes('即将') || /upcoming/i.test(s))
+    return (
+      <Tag color="orange" style={{ margin: 0, borderRadius: 6 }}>
+        {s}
+      </Tag>
+    );
+  if (s.includes('已实施') || s.includes('作废') || /implemented/i.test(s))
+    return (
+      <Tag color="magenta" style={{ margin: 0, borderRadius: 6 }}>
+        {s}
+      </Tag>
+    );
+  if (s.includes('观察'))
+    return (
+      <Tag color="processing" style={{ margin: 0, borderRadius: 6 }}>
+        {s}
+      </Tag>
+    );
+  return (
+    <Tag color="default" style={{ margin: 0, borderRadius: 6 }}>
+      {s}
+    </Tag>
+  );
 }
 
 function filterWarningsMatchingUpload(
@@ -321,7 +443,8 @@ const AlertPage: React.FC = () => {
 
   // 状态管理
   const [activeTab, setActiveTab] = useState<string>('reverse-alert'); // 默认显示反向预警
-  const [warnings, setWarnings] = useState<WarningItem[]>([]);
+  /** 与正向解析兜底、详情弹窗等同步的预警快照（仅通过 setWarnings 更新） */
+  const [, setWarnings] = useState<WarningItem[]>([]);
   const [forwardWarnings, setForwardWarnings] = useState<EnterpriseAnalysisResult[]>([]); // 正向预警结果
   const [loading, setLoading] = useState<boolean>(false);
   const [searchLoading, setSearchLoading] = useState<boolean>(false);
@@ -350,20 +473,27 @@ const AlertPage: React.FC = () => {
   const [forwardFile, setForwardFile] = useState<File | null>(null);
   const [, setForwardResults] = useState<any[]>([]);
 
+  /** 预警列表 tab：自动正向预警卡片数据与筛选 */
+  const [forwardAutoRows, setForwardAutoRows] = useState<ForwardAutoAlertRow[]>([]);
+  const [forwardAutoTotal, setForwardAutoTotal] = useState(0);
+  const [alertListKeyword, setAlertListKeyword] = useState('');
+  const [alertListTypeFilter, setAlertListTypeFilter] = useState<string>('all');
+  const [alertDateRange, setAlertDateRange] = useState<[Dayjs, Dayjs] | null>(null);
+  const [alertListPage, setAlertListPage] = useState(1);
+  const [alertListPageSize, setAlertListPageSize] = useState(10);
+  /** 为 true 时当前数据为后端分页的一页，翻页需重新请求 */
+  const [alertListServerPaging, setAlertListServerPaging] = useState(false);
+
   // API 基础配置
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
-  // 获取预警列表
-  const fetchWarnings = async () => {
+  /** 与原逻辑一致：拉取 /warnings/list（及备用），供反向兜底、正向轮询匹配等使用 */
+  const requestWarningsList = async (): Promise<WarningItem[]> => {
     try {
-      setLoading(true);
-
-      // 首先尝试文档中提到的、我们确认有数据的端点: /api/warnings/list
       console.log('开始请求预警列表:', `${API_BASE_URL}/warnings/list`);
       const response = await axios.get(`${API_BASE_URL}/warnings/list`);
       console.log('API响应数据:', response);
 
-      // 根据您确认的数据格式处理响应
       if (response.data && response.data.success && Array.isArray(response.data.data)) {
         const warningData: WarningItem[] = response.data.data.map((item: any) => ({
           id: item.id,
@@ -378,32 +508,24 @@ const AlertPage: React.FC = () => {
           related_standards: [item.old_bz_id, item.new_bz_id]
         })) as WarningItem[];
 
-        setWarnings(warningData);
         console.log(`获取到 ${warningData.length} 条预警数据`);
-      } else {
-        console.error('API响应格式不符合预期:', response.data);
-
-        // 如果首选端点失败，尝试标准DRF端点
-        console.log('尝试备用API端点: /api/warnings/');
-        const backupResponse = await axios.get(`${API_BASE_URL}/warnings/`);
-
-        let warningData: WarningItem[] = [];
-
-        if (backupResponse.data && Array.isArray(backupResponse.data)) {
-          // 如果直接返回数组
-          warningData = backupResponse.data as WarningItem[];
-        } else if (backupResponse.data && backupResponse.data.results) {
-          // 如果是分页格式
-          warningData = backupResponse.data.results as WarningItem[];
-        }
-
-        setWarnings(warningData);
-        console.log(`从备用端点获取到 ${warningData.length} 条预警数据`);
+        return warningData;
       }
+
+      console.error('API响应格式不符合预期:', response.data);
+      console.log('尝试备用API端点: /api/warnings/');
+      const backupResponse = await axios.get(`${API_BASE_URL}/warnings/`);
+
+      let warningData: WarningItem[] = [];
+      if (backupResponse.data && Array.isArray(backupResponse.data)) {
+        warningData = backupResponse.data as WarningItem[];
+      } else if (backupResponse.data && backupResponse.data.results) {
+        warningData = backupResponse.data.results as WarningItem[];
+      }
+      console.log(`从备用端点获取到 ${warningData.length} 条预警数据`);
+      return warningData;
     } catch (error) {
       console.error('获取预警列表失败:', error);
-
-      // 检查错误类型
       if (axios.isAxiosError(error)) {
         console.error('API错误详情:', {
           message: error.message,
@@ -411,11 +533,71 @@ const AlertPage: React.FC = () => {
           status: error.response?.status,
           url: error.config?.url
         });
+      }
+      return [];
+    }
+  };
+
+  /** 用 /warnings/list（及备用）填充预警列表卡片，便于在新接口无数据或未实现时仍能展示 */
+  const fillAlertListFromLegacyWarnings = async () => {
+    const legacy = await requestWarningsList();
+    setWarnings(legacy);
+    setForwardAutoRows(legacy.map(warningItemToForwardRow));
+    setForwardAutoTotal(legacy.length);
+    setAlertListServerPaging(false);
+  };
+
+  /**
+   * 自动正向预警列表：优先 GET /warnings/forward-auto-list；若无数据或失败则用 /warnings/list 展示。
+   * Query: page, page_size, keyword, warning_type, start_date, end_date
+   */
+  const refreshAlertListTab = async (pageOverride?: number, pageSizeOverride?: number) => {
+    const effectivePage = pageOverride ?? alertListPage;
+    const effectiveSize = pageSizeOverride ?? alertListPageSize;
+    try {
+      setLoading(true);
+      const params: Record<string, string | number | undefined> = {
+        page: effectivePage,
+        page_size: effectiveSize,
+        keyword: alertListKeyword.trim() || undefined,
+        warning_type: alertListTypeFilter === 'all' ? undefined : alertListTypeFilter
+      };
+      if (alertDateRange?.[0] && alertDateRange?.[1]) {
+        params.start_date = alertDateRange[0].format('YYYY-MM-DD');
+        params.end_date = alertDateRange[1].format('YYYY-MM-DD');
+      }
+      const res = await axios.get(`${API_BASE_URL}/warnings/forward-auto-list`, { params });
+      const d = res.data;
+      let items: ForwardAutoAlertRow[] = [];
+      let total = 0;
+      if (d?.success === true && d?.data && Array.isArray(d.data.items)) {
+        items = d.data.items.map((x: Record<string, unknown>) => normalizeForwardAutoItem(x));
+        total = Number(d.data.total ?? items.length);
+        setAlertListServerPaging(total > items.length);
+      } else if (d?.data && Array.isArray(d.data)) {
+        items = (d.data as Record<string, unknown>[]).map((x) => normalizeForwardAutoItem(x));
+        total = Number(d.total ?? d.count ?? items.length);
+        setAlertListServerPaging(false);
+      } else if (Array.isArray(d?.results)) {
+        items = d.results.map((x: Record<string, unknown>) => normalizeForwardAutoItem(x));
+        total = Number(d.count ?? items.length);
+        setAlertListServerPaging(Number(d.count) > items.length);
       } else {
-        console.error('未知错误:', error);
+        setAlertListServerPaging(false);
       }
 
-      setWarnings([]);
+      if (items.length > 0) {
+        setForwardAutoRows(items);
+        setForwardAutoTotal(total);
+        setWarnings(items.map(forwardRowToWarningItem));
+        console.log(`forward-auto-list: ${items.length} 条 (total=${total})`);
+      } else {
+        console.warn('forward-auto-list 无有效行，回退 /warnings/list 以展示预警列表');
+        await fillAlertListFromLegacyWarnings();
+      }
+    } catch (e) {
+      console.warn('GET /warnings/forward-auto-list 不可用，回退 /warnings/list', e);
+      await fillAlertListFromLegacyWarnings();
     } finally {
       setLoading(false);
     }
@@ -680,7 +862,7 @@ const AlertPage: React.FC = () => {
           ? `${data.message}\n\n（当前预警库约 ${data.totalRecords ?? '—'} 条记录。）`
           : `文件 "${file.name}" 可能已处理完成。\n系统当前共有 ${data.totalRecords} 条预警数据，但未找到与您上传文件直接相关的具体结果。\n您可以稍后刷新页面查看最新预警列表，或联系管理员确认处理状态。`
       });
-      fetchWarnings();
+      void refreshAlertListTab();
       return;
     }
 
@@ -1223,7 +1405,7 @@ const AlertPage: React.FC = () => {
         });
 
         // 重新获取预警列表以反映最新的巡检结果
-        fetchWarnings();
+        void refreshAlertListTab();
       } else {
         modalApi.warning({
           title: '巡检结果',
@@ -1284,7 +1466,7 @@ const AlertPage: React.FC = () => {
               ? '\n\n说明：WebSocket 未连接时仅无法接收实时推送，不影响通过本按钮与列表查看结果。'
               : '')
         });
-        await fetchWarnings();
+        await refreshAlertListTab();
         return;
       }
       applyForwardCompletedPollResult(result, forwardFile, { skipProcessingCompletedGuard: true });
@@ -1313,53 +1495,16 @@ const AlertPage: React.FC = () => {
     }
   };
 
-  // 表格列配置
-  const warningColumns = [
-    {
-      title: '类型',
-      dataIndex: 'warning_type',
-      key: 'warning_type',
-      width: 100,
-      render: (type: string) => getWarningTypeTag(type)
-    },
-    {
-      title: '标题',
-      dataIndex: 'title',
-      key: 'title',
-      render: (text: string, record: WarningItem) => (
-        <div>
-          <div><strong>{text}</strong></div>
-          <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-            企业标准: {record.enterprise_bz_id} | 国家标准: {record.national_bz_id}
-          </div>
-        </div>
-      )
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 150,
-      render: (date: string) => new Date(date).toLocaleString()
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 100,
-      render: (_: any, record: WarningItem) => (
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => {
-            setSelectedWarning(record);
-            setModalVisible(true);
-          }}
-        >
-          查看
-        </Button>
-      )
-    }
-  ];
+  const alertListDisplayRows = useMemo(() => {
+    if (alertListServerPaging) return forwardAutoRows;
+    const start = (alertListPage - 1) * alertListPageSize;
+    return forwardAutoRows.slice(start, start + alertListPageSize);
+  }, [alertListServerPaging, forwardAutoRows, alertListPage, alertListPageSize]);
+
+  const alertListPagerTotal = useMemo(() => {
+    if (alertListServerPaging) return Math.max(forwardAutoTotal, forwardAutoRows.length);
+    return forwardAutoRows.length;
+  }, [alertListServerPaging, forwardAutoTotal, forwardAutoRows.length]);
 
   // 清理函数：组件卸载时停止轮询
   useEffect(() => {
@@ -1397,8 +1542,8 @@ const AlertPage: React.FC = () => {
     // 初始化处理完成标志
     setProcessingCompleted(false);
 
-    // 加载初始数据
-    fetchWarnings();
+    // 加载初始数据（优先自动正向预警列表接口，失败时回退 /warnings/list）
+    void refreshAlertListTab();
 
     // 清理函数：关闭可能存在的 ws 连接
     return () => {
@@ -1727,7 +1872,7 @@ const AlertPage: React.FC = () => {
                   {activeTab === 'alert-list' && (
                     <Button
                       icon={<ReloadOutlined />}
-                      onClick={fetchWarnings}
+                      onClick={() => void refreshAlertListTab()}
                       disabled={loading}
                     >
                       刷新
@@ -2386,14 +2531,119 @@ const AlertPage: React.FC = () => {
                 key: 'alert-list',
                 label: '预警列表',
                 children: (
-                  <div>
-                    <div style={{ marginBottom: '16px', textAlign: 'right' }}>
+                  <div style={{ marginTop: 4 }}>
+                    <Row justify="space-between" align="top" gutter={[16, 16]} style={{ marginBottom: 20 }}>
+                      <Col flex="1">
+                        <Title level={4} style={{ margin: '0 0 8px' }}>
+                          预警列表
+                        </Title>
+                        <Text type="secondary" style={{ fontSize: 13 }}>
+                          实时监控并列出系统中自动识别的企业标准及其国家标准关联情况（无需上传企标文件，数据由后端遍历数据库生成）。
+                        </Text>
+                      </Col>
+                      <Col>
+                        <Space wrap>
+                          <Button icon={<AuditOutlined />} onClick={triggerActiveScan}>
+                            主动巡检
+                          </Button>
+                          <Button
+                            type="primary"
+                            icon={<DownloadOutlined />}
+                            onClick={() => {
+                              const q = new URLSearchParams();
+                              if (alertListKeyword.trim()) q.set('keyword', alertListKeyword.trim());
+                              if (alertListTypeFilter !== 'all') q.set('warning_type', alertListTypeFilter);
+                              if (alertDateRange?.[0] && alertDateRange?.[1]) {
+                                q.set('start_date', alertDateRange[0].format('YYYY-MM-DD'));
+                                q.set('end_date', alertDateRange[1].format('YYYY-MM-DD'));
+                              }
+                              modalApi.info({
+                                title: '导出报表',
+                                content: (
+                                  <div>
+                                    <p style={{ marginBottom: 8 }}>
+                                      请在后端实现导出，例如：
+                                    </p>
+                                    <Text code>
+                                      GET {API_BASE_URL}/warnings/forward-auto-list/export?{q.toString() || '…'}
+                                    </Text>
+                                  </div>
+                                )
+                              });
+                            }}
+                          >
+                            导出报表
+                          </Button>
+                        </Space>
+                      </Col>
+                    </Row>
+
+                    <div
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        gap: 12,
+                        marginBottom: 16,
+                        alignItems: 'center'
+                      }}
+                    >
+                      <Input
+                        allowClear
+                        style={{ minWidth: 220, maxWidth: 360, flex: '1 1 220px' }}
+                        placeholder="输入标准编号或标题关键词..."
+                        prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+                        value={alertListKeyword}
+                        onChange={(e) => setAlertListKeyword(e.target.value)}
+                        onPressEnter={() => {
+                          setAlertListPage(1);
+                          void refreshAlertListTab(1, alertListPageSize);
+                        }}
+                      />
+                      <Select
+                        style={{ width: 140 }}
+                        value={alertListTypeFilter}
+                        onChange={(v) => setAlertListTypeFilter(v)}
+                        options={[
+                          { value: 'all', label: '全部类型' },
+                          { value: 'upcoming', label: '即将实施' },
+                          { value: 'implemented', label: '已实施' },
+                          { value: 'observing', label: '观察中' }
+                        ]}
+                      />
+                      <DatePicker.RangePicker
+                        style={{ minWidth: 260 }}
+                        value={alertDateRange}
+                        onChange={(range) => setAlertDateRange(range as [Dayjs, Dayjs] | null)}
+                      />
                       <Button
-                        icon={<AuditOutlined />}
-                        onClick={triggerActiveScan}
+                        type="primary"
+                        onClick={() => {
+                          setAlertListPage(1);
+                          void refreshAlertListTab(1, alertListPageSize);
+                        }}
                       >
-                        主动巡检
+                        查询
                       </Button>
+                    </div>
+
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '120px 1fr 160px 100px',
+                        gap: 12,
+                        padding: '10px 16px',
+                        background: '#fafafa',
+                        borderRadius: 8,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: '#595959',
+                        marginBottom: 8
+                      }}
+                    >
+                      <span>状态</span>
+                      <span>标准变更预警内容</span>
+                      <span>创建时间</span>
+                      <span style={{ textAlign: 'right' }}>操作</span>
                     </div>
 
                     {loading ? (
@@ -2401,19 +2651,119 @@ const AlertPage: React.FC = () => {
                         <Spin size="large" />
                         <div style={{ marginTop: '16px' }}>正在加载预警信息...</div>
                       </div>
+                    ) : forwardAutoRows.length === 0 ? (
+                      <Empty description="暂无自动正向预警数据（后端接口就绪后将展示遍历企标得到的国标情况）" />
                     ) : (
-                      <Table
-                        dataSource={warnings}
-                        columns={warningColumns}
-                        rowKey="id"
-                        pagination={{
-                          pageSize: 10,
-                          showSizeChanger: true,
-                          showQuickJumper: true,
-                          showTotal: (total) => `共 ${total} 条预警`
-                        }}
-                        scroll={{ x: 800 }}
-                      />
+                      <>
+                        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                          {alertListDisplayRows.map((row) => (
+                            <div
+                              key={String(row.id)}
+                              style={{
+                                background: '#fff',
+                                borderRadius: 10,
+                                border: '1px solid #f0f0f0',
+                                padding: '16px 18px',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: '120px 1fr 160px 100px',
+                                  gap: 12,
+                                  alignItems: 'start'
+                                }}
+                              >
+                                <div>{getListStatusTag(row.display_status)}</div>
+                                <div>
+                                  <Text strong style={{ fontSize: 13, color: '#262626' }}>
+                                    {row.label}
+                                  </Text>
+                                  <div
+                                    style={{
+                                      marginTop: 8,
+                                      padding: '12px 14px',
+                                      background: '#f5f5f5',
+                                      borderRadius: 8,
+                                      fontSize: 13,
+                                      lineHeight: 1.6
+                                    }}
+                                  >
+                                    <span style={{ color: '#8c8c8c', textDecoration: 'line-through' }}>
+                                      {row.enterprise_standard_text}
+                                    </span>
+                                    <span style={{ margin: '0 8px', color: '#bfbfbf' }}>→</span>
+                                    <span style={{ color: '#1677ff', fontWeight: 600 }}>
+                                      {row.national_standard_text}
+                                    </span>
+                                  </div>
+                                  <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                                    企标与国标关联由后端自动遍历生成；无需上传企标文件。
+                                  </Text>
+                                </div>
+                                <div style={{ color: '#595959', fontSize: 13 }}>
+                                  {row.created_at
+                                    ? new Date(row.created_at).toLocaleString('zh-CN', {
+                                        hour12: false
+                                      })
+                                    : '—'}
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    onClick={() => {
+                                      setSelectedWarning(forwardRowToWarningItem(row));
+                                      setModalVisible(true);
+                                    }}
+                                    style={{ padding: 0 }}
+                                  >
+                                    查看详情 <RightOutlined />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </Space>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: 12,
+                            marginTop: 20,
+                            paddingTop: 12,
+                            borderTop: '1px solid #f0f0f0'
+                          }}
+                        >
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            {(() => {
+                              const total = alertListPagerTotal;
+                              if (total === 0) return '共 0 条记录';
+                              const start = (alertListPage - 1) * alertListPageSize + 1;
+                              const end = Math.min(alertListPage * alertListPageSize, total);
+                              return `显示第 ${start} 至 ${end} 条，共 ${total} 条记录`;
+                            })()}
+                          </Text>
+                          <Pagination
+                            size="small"
+                            current={alertListPage}
+                            pageSize={alertListPageSize}
+                            total={alertListPagerTotal}
+                            showSizeChanger
+                            pageSizeOptions={['10', '20', '50']}
+                            onChange={(page, ps) => {
+                              setAlertListPage(page);
+                              setAlertListPageSize(ps);
+                              if (alertListServerPaging) {
+                                void refreshAlertListTab(page, ps);
+                              }
+                            }}
+                          />
+                        </div>
+                      </>
                     )}
                   </div>
                 )
