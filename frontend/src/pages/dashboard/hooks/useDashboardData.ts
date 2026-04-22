@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react'
-import { fetchStatistics, fetchWarnings } from '@/services/dashboard'
+import { fetchStatistics, fetchDashboardAlerts } from '@/services/dashboard'
 import { useDashboardStore } from '@/stores/dashboard'
 
 /**
@@ -12,9 +12,9 @@ export function useDashboardData() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [statsData, warningsData] = await Promise.all([
+      const [statsData, alertsData] = await Promise.all([
         fetchStatistics(),
-        fetchWarnings(),
+        fetchDashboardAlerts(),
       ])
 
       const typeData = Object.entries(statsData.types).map(([type, value]) => ({
@@ -31,10 +31,10 @@ export function useDashboardData() {
         activeCount: statsData.states['现行'] ?? 0,
         pendingCount: statsData.states['即将实施'] ?? 0,
         revokedCount: statsData.states['废止'] ?? 0,
-        unreadWarnings: warningsData.unread_count,
+        unreadWarnings: alertsData.abolished.length,
         typeData,
         stateData,
-        warnings: warningsData.data,
+        warnings: [],
       })
     } finally {
       setLoading(false)
