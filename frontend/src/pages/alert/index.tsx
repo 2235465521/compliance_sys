@@ -15,7 +15,8 @@ import {
   Empty,
   DatePicker,
   Select,
-  Pagination
+  Pagination,
+  Badge
 } from 'antd';
 import {
   WarningOutlined,
@@ -1867,25 +1868,49 @@ const AlertPage: React.FC = () => {
                   </div>
                 </div>
               </Col>
-              <Col xs={24} lg={10} style={{ textAlign: 'right' }}>
-                <Space wrap>
-                  {activeTab === 'alert-list' && (
-                    <Button
-                      icon={<ReloadOutlined />}
-                      onClick={() => void refreshAlertListTab()}
-                      disabled={loading}
-                    >
-                      刷新
-                    </Button>
-                  )}
-                  <Button
-                    type="primary"
-                    icon={<AuditOutlined />}
-                    onClick={triggerActiveScan}
+              <Col
+                xs={24}
+                lg={10}
+                style={{
+                  textAlign: 'right',
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  alignItems: 'center'
+                }}
+              >
+                <Badge count={100} overflowCount={99} size="small" offset={[6, 0]}>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label="打开预警列表"
+                    title="预警列表"
+                    onClick={() => setActiveTab('alert-list')}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setActiveTab('alert-list');
+                      }
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 6,
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      color: '#faad14',
+                      transition: 'background 0.2s, transform 0.15s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(250, 173, 20, 0.12)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
                   >
-                    主动巡检
-                  </Button>
-                </Space>
+                    <BulbOutlined style={{ fontSize: 22 }} />
+                  </span>
+                </Badge>
               </Col>
             </Row>
           </div>
@@ -2543,6 +2568,13 @@ const AlertPage: React.FC = () => {
                       </Col>
                       <Col>
                         <Space wrap>
+                          <Button
+                            icon={<ReloadOutlined />}
+                            onClick={() => void refreshAlertListTab()}
+                            disabled={loading}
+                          >
+                            刷新
+                          </Button>
                           <Button icon={<AuditOutlined />} onClick={triggerActiveScan}>
                             主动巡检
                           </Button>
