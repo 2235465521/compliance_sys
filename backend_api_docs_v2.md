@@ -68,6 +68,21 @@
   ```
 - **响应**: 返回 `.xlsx` 文件流。
 
+### 2.3.1 导出单条合规性报表 (兼容模式)
+- **URL**: `GET /api/standards/export-report/`
+- **Query 参数**: `bz_id=Q/ABC 001-2026`
+- **响应**: 返回 `.xlsx` 文件流。
+
+### 2.3.2 导出批量合规性报表 (推荐)
+- **URL**: `POST /api/standards/export-report/`
+- **请求报文**:
+  ```json
+  {
+      "bz_ids": ["Q/ABC 001-2026", "Q/XYZ 003-2025"]
+  }
+  ```
+- **响应**: 返回 `.xlsx` 文件流。
+
 ### 2.4 工作台基础搜索
 - **URL**: `GET /api/standards/basic-search/`
 - **Query 参数**: `q=关键字`
@@ -168,6 +183,46 @@
   ```
 - **响应报文**: `{"success": true, "message": "..."}`
 
+### 3.2.1 批量解析并入库规范性引用 (当前前端主流程)
+- **URL**: `POST /api/standards/batch-references/`
+- **请求格式**: `multipart/form-data`
+- **请求字段**:
+  - `file`（单文件，兼容字段）
+  - `files` / `files[]`（多文件）
+  - `bz_id`（可选）
+- **说明**: 当前合规向导第1步默认调用该接口处理规范性引用解析与入库链路。
+- **响应示例**:
+  ```json
+  {
+      "success": true,
+      "data": {
+          "references": [
+              { "standard_id": "GB/T601-2016", "reference_name": "..." }
+          ]
+      }
+  }
+  ```
+
+### 3.2.2 批量解析并入库企标指标 (当前前端主流程)
+- **URL**: `POST /api/standards/batch-indexes/`
+- **请求格式**: `multipart/form-data`
+- **请求字段**:
+  - `file`（单文件，兼容字段）
+  - `files` / `files[]`（多文件）
+  - `bz_id`（可选）
+- **说明**: 当前合规向导第1步并行调用该接口处理企标指标提取与入库。
+- **响应示例**:
+  ```json
+  {
+      "success": true,
+      "data": {
+          "indexes": [
+              { "index_name": "技术要求", "index_context": "..." }
+          ]
+      }
+  }
+  ```
+
 ### 3.3 审核员裁决提交
 - **URL**: `POST /api/audit/submit/`
 - **请求报文**:
@@ -180,6 +235,36 @@
       "modified_index_name": "指标名"
   }
   ```
+
+### 3.3.1 获取待审核指标列表
+- **URL**: `GET /api/audit/pending_indexes/`
+- **说明**: 返回状态为 `status=0` 的待审核数据，供第3步人工审核使用。
+- **响应示例**:
+  ```json
+  {
+      "success": true,
+      "data": [
+          {
+              "id": 1,
+              "bz_id": "Q/ABC 001-2026",
+              "index_name": "技术要求",
+              "index_context": "...",
+              "status": 0
+          }
+      ]
+  }
+  ```
+
+### 3.3.2 批量审核裁决提交
+- **URL**: `POST /api/audit/bulk_submit/`
+- **请求报文**:
+  ```json
+  {
+      "ids": [1, 2, 3],
+      "action": "approve"
+  }
+  ```
+- **说明**: 第3步“一键通过/一键驳回”使用该接口。
 
 ### 3.4 异步企标附件解析 (Celery)
 - **URL**: `POST /api/analyze_qb_references_auto/`
@@ -196,6 +281,37 @@
       "code": 200,
       "status": "ready",
       "data": { "a": ["修订项1"], "b": ["修订项2"], "c": ["修订项3"] }
+  }
+  ```
+
+### 3.6 引用映射保存 (旧引用编号 -> 最新标准编号)
+- **URL**: `POST /api/save_mapping/`
+- **兼容 URL**: `POST /api/mapping/save/`
+- **请求报文**:
+  ```json
+  {
+      "enterprise_bz_id": "GB/T601-2016",
+      "national_bz_id": "GB/T601-2020"
+  }
+  ```
+- **说明**: 第4步“人工审核数据完整并存入映射”会按行批量调用该接口。
+
+### 3.7 指标库查询 (比对数据源)
+- **URL**: `GET /api/indexes_table/`
+- **Query 参数**:
+  - `bz_id`（可选，按标准编号过滤）
+- **说明**: 第5步技术指标对比的数据源接口。
+- **响应示例**:
+  ```json
+  {
+      "data": [
+          {
+              "id": 101,
+              "bz_id": "GB/T601-2020",
+              "index_name": "技术要求",
+              "index_context": "..."
+          }
+      ]
   }
   ```
 

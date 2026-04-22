@@ -15,15 +15,14 @@ import {
   message,
 } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
-import { EyeOutlined, UploadOutlined } from '@ant-design/icons'
+import axios from 'axios'
+import { UploadOutlined } from '@ant-design/icons'
 import { PageContainer } from '@ant-design/pro-components'
-import { useNavigate } from 'react-router-dom'
 import {
   exportComplianceReport,
   getComplianceTasks,
   getNationalIndexes,
   getPendingIndexes,
-  postInsertIndexes,
   uploadEnterpriseStandard,
   type NationalIndexItem,
 } from '@/services/compliance'
@@ -31,6 +30,7 @@ import { useDifyNotifications } from '@/pages/compliance/hooks/useDifyNotificati
 import type { ComplianceTask } from '@/types/compliance'
 import ComplianceWizardPanel, {
   type ComplianceWizardPanelHandle,
+  WIZARD_STEP_TITLES,
   type WizardProgressSnapshot,
 } from '@/pages/compliance/ComplianceWizardPanel'
 
@@ -81,13 +81,29 @@ const toNumericId = (id: string): number => {
   return Number.isFinite(n) ? n : -1
 }
 
+const toFriendlyRequestError = (error: unknown, fallback: string) => {
+  if (axios.isAxiosError(error)) {
+    if (!error.response) {
+      return '网络连接失败：当前无法访问后端服务，请确认 API 服务已启动且地址可达。'
+    }
+    const status = error.response.status
+    if (status >= 500) {
+      return `服务端异常（HTTP ${status}），请稍后重试或检查后端日志。`
+    }
+    if (status === 404) {
+      return '接口不存在（404），请确认前后端接口路径是否一致。'
+    }
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
 const CompliancePage: React.FC = () => {
-  const navigate = useNavigate()
   const [tasks, setTasks] = useState<ComplianceTask[]>([])
   const [error, setError] = useState<string | null>(null)
   const [uploadVisible, setUploadVisible] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadFileList, setUploadFileList] = useState<UploadFile[]>([])
+  const [uploadBzId, setUploadBzId] = useState('')
   const [reportVisible, setReportVisible] = useState(false)
   const [reporting, setReporting] = useState(false)
   const [reportBzId, setReportBzId] = useState('')
@@ -103,6 +119,7 @@ const CompliancePage: React.FC = () => {
     pendingCount: 0,
     hasExtractionData: false,
   })
+  const hasShownNetworkToastRef = useRef(false)
   const wizardPanelRef = useRef<ComplianceWizardPanelHandle>(null)
   const messageApiRef = useRef(messageApi)
   messageApiRef.current = messageApi
@@ -119,15 +136,16 @@ const CompliancePage: React.FC = () => {
       setError(null)
       const response = await getComplianceTasks()
       setTasks(response.data)
+      hasShownNetworkToastRef.current = false
     } catch (requestError) {
-      const messageText =
-        requestError instanceof Error
-          ? requestError.message
-          : '任务列表加载失败，请检查后端服务是否可用。'
+      const messageText = toFriendlyRequestError(requestError, '任务列表加载失败，请检查后端服务是否可用。')
       setError(messageText)
-      console.error(requestError)
+      if (!hasShownNetworkToastRef.current) {
+        messageApi.error(messageText)
+        hasShownNetworkToastRef.current = true
+      }
     }
-  }, [])
+  }, [messageApi])
 
   const loadExtractedIndicatorsFromPending = useCallback(async () => {
     const response = await getPendingIndexes()
@@ -144,8 +162,11 @@ const CompliancePage: React.FC = () => {
     try {
       return await loadExtractedIndicatorsFromPending()
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : '刷新提取数据失败'
-      messageApiRef.current.error(messageText)
+      const messageText = toFriendlyRequestError(error, '刷新提取数据失败')
+      if (!hasShownNetworkToastRef.current) {
+        messageApiRef.current.error(messageText)
+        hasShownNetworkToastRef.current = true
+      }
       return undefined
     }
   }, [loadExtractedIndicatorsFromPending])
@@ -240,9 +261,10 @@ const CompliancePage: React.FC = () => {
 
   const workflowProgress = useMemo(() => {
     const { currentStep } = wizardSnapshot
-    const percent = Math.min(100, Math.round((currentStep / 6) * 100))
-    const donePhases = Math.min(4, Math.ceil((currentStep / 6) * 4))
-    return { percent, donePhases, totalPhases: 4 }
+    const totalPhases = WIZARD_STEP_TITLES.length
+    const donePhases = Math.min(totalPhases, Math.max(1, currentStep + 1))
+    const percent = Math.min(100, Math.round((donePhases / totalPhases) * 100))
+    return { percent, donePhases, totalPhases }
   }, [wizardSnapshot])
 
   const parseReady = parsePhase === 'indexes_ready' || wizardSnapshot.hasExtractionData
@@ -256,6 +278,10 @@ const CompliancePage: React.FC = () => {
       messageApi.warning('请先选择需要上传的企业标准文件')
       return
     }
+    if (!uploadBzId.trim()) {
+      messageApi.warning('请先填写企标编号（bz_id）后再上传。')
+      return
+    }
 
     try {
       setUploading(true)
@@ -263,16 +289,14 @@ const CompliancePage: React.FC = () => {
       const maxIdBefore = beforeIndexes.data.reduce((max, row) => Math.max(max, toNumericId(row.id)), -1)
       setUploadBaselineIndexId(maxIdBefore)
 
-      const uploadResponse = await uploadEnterpriseStandard(uploadFileList[0].originFileObj as File)
+      const normalizedBzId = uploadBzId.trim()
+      const uploadResponse = await uploadEnterpriseStandard(uploadFileList[0].originFileObj as File, normalizedBzId)
       const uploadData = (uploadResponse?.data ?? {}) as Record<string, unknown>
       const autoIndexes = extractIndicatorsFromUnknown(uploadData)
       const maybeBzId = uploadData.bz_id
+      localStorage.setItem('compliance-latest-upload-bzid', String(maybeBzId ?? normalizedBzId))
       if (autoIndexes.length > 0) {
         setEnterpriseIndicators(autoIndexes)
-        if (typeof maybeBzId === 'string' && maybeBzId.trim()) {
-          await postInsertIndexes({ bz_id: maybeBzId, indexes: autoIndexes })
-          messageApi.success('解析结果已写入指标库')
-        }
       } else {
         messageApi.info('已提交异步解析，待后端任务完成后会出现提取指标')
         let extracted = await loadExtractedIndicatorsFromPending()
@@ -298,6 +322,7 @@ const CompliancePage: React.FC = () => {
       messageApi.success('企业标准上传成功，后端已开始异步解析（Celery + Dify）')
       setUploadVisible(false)
       setUploadFileList([])
+      setUploadBzId('')
       setParsePhase('submitted')
       schedulePostUploadPoll(0)
     } catch (uploadError) {
@@ -370,17 +395,6 @@ const CompliancePage: React.FC = () => {
         title: '合规性评价',
         subTitle: '企业标准合规性评价全流程管理',
       }}
-      extra={[
-        <Button key="wizard" onClick={() => navigate('/compliance/wizard')}>
-          独立向导页
-        </Button>,
-        <Button key="report" icon={<EyeOutlined />} onClick={() => setReportVisible(true)}>
-          查看评价报告
-        </Button>,
-        <Button key="upload" type="primary" icon={<UploadOutlined />} onClick={() => setUploadVisible(true)}>
-          上传企业标准
-        </Button>,
-      ]}
       style={{ minHeight: '100vh' }}
     >
       {messageContextHolder}
@@ -492,6 +506,12 @@ const CompliancePage: React.FC = () => {
         <Text type="secondary" style={{ display: 'block', marginTop: 12 }}>
           上传后将调用后端异步解析接口，进度由后端任务系统推进；与向导第 1 步上传等价联调。
         </Text>
+        <Input
+          style={{ marginTop: 12 }}
+          placeholder="请输入企标编号（bz_id），例如 Q/ABC 001-2026"
+          value={uploadBzId}
+          onChange={(event) => setUploadBzId(event.target.value)}
+        />
       </Modal>
     </PageContainer>
   )

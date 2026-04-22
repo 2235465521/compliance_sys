@@ -2,7 +2,6 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import BasicLayout from '@/layouts/BasicLayout'
 import AlertPage from '@/pages/alert'
 import CompliancePage from '@/pages/compliance'
-import ComplianceWizardPage from '@/pages/compliance/wizard'
 import DashboardPage from '@/pages/dashboard'
 import EnterpriseArchivePage from '@/pages/enterprise-archive'
 import DuplicateCheckPage from '@/pages/duplicate-check'
@@ -22,7 +21,6 @@ export const router = createBrowserRouter([
       { path: 'novelty-search', element: <NoveltySearchPage /> },
       { path: 'duplicate-check', element: <DuplicateCheckPage /> },
       { path: 'compliance', element: <CompliancePage /> },
-      { path: 'compliance/wizard', element: <ComplianceWizardPage /> },
       { path: 'alert', element: <AlertPage /> },
       { path: 'enterprise-archive', element: <EnterpriseArchivePage /> },
       { path: 'template-archive', element: <TemplateArchivePage /> },
