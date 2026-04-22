@@ -1,5 +1,4 @@
-import { Card, Space, Typography, Progress, Divider } from "antd";
-import { RiseOutlined } from "@ant-design/icons";
+import { Card, Typography, Progress } from "antd";
 import type { StandardTypeStat } from "@/types/dashboard";
 
 interface Props {

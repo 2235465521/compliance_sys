@@ -14,8 +14,7 @@ import 'dayjs/locale/zh-cn'
 import KpiCard from './components/KpiCard'
 import StatsPieChart from './components/StatsPieChart'
 import StandardSearch from './components/StandardSearch'
-import RealTimeUpdates from './components/RealTimeUpdates'
-import RevocationWarnings from './components/RevocationWarnings'
+import DashboardAlerts from './components/DashboardAlerts'
 import QuickActions from './components/QuickActions'
 import { useDashboardData } from './hooks/useDashboardData'
 
@@ -140,11 +139,8 @@ export default function DashboardPage() {
           </Col>
 
           {/* ── 底部实时更新与提醒专区 ──────────────────────────── */}
-          <Col xs={24} lg={16}>
-            <RealTimeUpdates />
-          </Col>
-          <Col xs={24} lg={8}>
-            <RevocationWarnings />
+          <Col span={24}>
+            <DashboardAlerts />
           </Col>
         </Row>
 

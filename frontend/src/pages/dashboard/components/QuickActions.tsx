@@ -1,4 +1,3 @@
-import { Card, Space } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import {
   AuditOutlined,
@@ -7,7 +6,6 @@ import {
   DatabaseOutlined,
   AlertOutlined,
   BankOutlined,
-  ArrowRightOutlined,
 } from '@ant-design/icons'
 import type { ReactNode } from 'react'
 
