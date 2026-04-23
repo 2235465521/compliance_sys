@@ -10,7 +10,7 @@
 | 成员二 | 合规性评价 `/compliance` | [成员二-合规性评价.md](./成员二-合规性评价.md) |
 | 成员三 | 查重服务 `/duplicate-check`、模板与存档 `/template-archive` | [成员三-查重与模板存档.md](./成员三-查重与模板存档.md) |
 | 成员四 | 预警系统 `/alert` | [成员四-预警系统.md](./成员四-预警系统.md) |
-| 成员五 | 标准库管理 `/standard-library`、查新服务 `/novelty-search`、企业档案 `/enterprise-archive`、系统安全与审计 `/system` | [成员五-标准库查新企业档案与系统.md](./成员五-标准库查新企业档案与系统.md) |
+| 成员五 | 标准库管理 `/standard-library`、查新服务 `/novelty-search`、企业档案 `/enterprise-archive`、系统安全与审计 `/system` | [成员五-标准库查新企业档案与系统.md](./成员五-标准库查新企业档案与系统.md)；界面规划见 [docs/member-five/README.md](./docs/member-five/README.md) |
 
 ## 全组统一约定（摘要）
 

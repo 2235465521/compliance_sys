@@ -1,0 +1,205 @@
+# 标准库管理模块：界面规划说明
+
+本文档依据「标准库管理」业务流程图（行业分类、国标元数据、数据正文库、标准谱系、查询统计及审计汇总）与《标准化信息服务平台——需求分析文档》第 8.1 节整理，供成员五前端实现对照。**与后端路径、用途的对照见第 8 节**；单条响应字段以 DRF 序列化与联调为准。全局响应形态（分页、`code` 包装等）见《[后端接口说明文档.md](../../后端接口说明文档.md)》第 1 节。
+
+---
+
+## 1. 模块目标与范围
+
+### 1.1 目标
+
+构建全平台**基准标准库**的管理端：维护行业分类体系、国标元数据（目录信息）、标准正文结构化数据、标准间谱系关系，并提供跨库检索与简单统计导出。所有写入操作在业务上需可追溯（具体审计查询在「系统安全与审计」模块展示）。
+
+### 1.2 本期不包含
+
+- 与其他业务模块（查重、合规、预警、仪表盘）的跳转、深链与字段对齐（另迭代处理）。
+- 后端解析引擎、谱系计算的具体实现细节（前端仅对接任务状态与结果展示）。
+- 审计日志的查询界面（归属 `/system/audit-log`）。
+
+---
+
+## 2. 业务流程对齐
+
+下列节点与提供的流程图一致；「界面落点」指建议承载该步骤的页面或区块。
+
+| 流程图节点 | 含义 | 界面落点 |
+|------------|------|----------|
+| Start / AdminLogin | 进入模块、管理员身份 | 全局登录与路由守卫；本模块内默认视为已登录管理员 |
+| SubModuleSelect | 选择子管理模块 | 模块内横向菜单；`/standard-library` 重定向至 `/standard-library/registry` |
+| **1.1 行业分类** | | |
+| Cat_Entry | 管理 ICS/CCS/自定义标签 | `/standard-library/taxonomy` |
+| Cat_Save / DB_Cat | 更新分类索引树、落库 | 同上，保存成功反馈；树组件刷新 |
+| End_1 | 配置完成 | 成功提示或返回入口 |
+| **1.2 国标元数据** | | |
+| Meta_Entry | 录入/导入目录信息 | `/standard-library/registry`：批量入库区 + 分页目录 ProTable |
+| Meta_Bind | 强制关联行业分类 | 新建/编辑表单中分类为**必选**；导入校验失败行提示 |
+| DB_Meta | 元数据/目录库 | 列表展示与详情抽屉 |
+| End_2 | 元数据入库完成 | 成功提示 |
+| **1.3 数据正文库** | | |
+| Body_Target | 选择已有元数据或上传新文件 | `/standard-library/body`：单本/批量上传文档并提交正文入库工作流 |
+| Body_Upload | 上传 PDF/Word | 上传组件、格式与大小提示 |
+| Body_Process（P1/P2/P3） | 提取目录/身份头；拆解章节条款；结构化技术指标 | 解析进度（Steps/Progress）；结果页分块：**目录**、**条款**、**技术指标**（Tab 或锚点分区） |
+| DB_Body | 数据正文库 | 结构化结果只读展示为主，按需「申请更正」走后续流程（产品定） |
+| End_3 | 正文库解析完成 | 成功态 + 跳转查看结构化结果 |
+| **1.4 标准谱系** | | |
+| Ped_Select | 检索需建立关系的标准对 | `/standard-library/lineage` 检索区 |
+| Ped_Link | 定义替代/废止等关系 | 关系表单或边编辑 |
+| Ped_Auto | 系统变更被替代标准状态 | 保存后展示后端返回的提示（文案、受影响标准列表摘要） |
+| DB_Ped | 谱系链条 | 关系列表或图视图 + 详情 |
+| End_4 | 谱系调整完成 | 成功提示 |
+| **1.5 查询统计** | | |
+| Stat_Filter | 行业/状态/年代/关键词等 | `/standard-library/registry`：统计卡片 + ProTable 筛选 + 关键字速查 |
+| Stat_Logic | 跨库检索 | 由后端执行；前端展示加载与结果 |
+| Stat_View | 列表与可视化报表 | 结果表 + 图表 Tab 或折叠区 |
+| End_5 | 导出/统计结束 | 导出按钮与下载反馈 |
+| **审计** | | |
+| AuditLog | 全流程操作审计留痕 | 不在本模块做查询页；写操作按钮侧可预留简短说明「操作将记入审计」 |
+| End_All | 管理结束 | — |
+
+---
+
+## 3. 信息架构与路由
+
+### 3.1 建议路由（均为 `children`，前缀 `/standard-library`）
+
+| Path | 说明 |
+|------|------|
+| `/standard-library` | 重定向至 `/standard-library/registry`（无独立概览页） |
+| `/standard-library/registry` | 标准入库与查询：元数据批量入库、库内统计、关键字速查、分页目录与详情 |
+| `/standard-library/taxonomy` | 行业分类体系：左栏体系切换与检索、右栏树表；模板下载与上传导入 |
+| `/standard-library/body` | 国标正文入库：单本/批量文档提交工作流；折叠区保留前言解析等已有接口 |
+| `/standard-library/lineage` | 标准谱系管理 |
+
+实现时在 [`frontend/src/routes/index.tsx`](../../frontend/src/routes/index.tsx) 中为 `standard-library` 增加嵌套 `children`；[`frontend/src/routes/menu.tsx`](../../frontend/src/routes/menu.tsx) 侧栏仅一级「标准库管理」时，模块内可用 **二级菜单**（ProLayout `menuDataRender` 或自定义侧栏）或 **首页卡片** 进入子路由。
+
+### 3.2 导航与高亮
+
+- 子路由全部使用 **kebab-case**，与 `pages/standard-library/` 下文件夹名一致。
+- 默认进入：`/standard-library` → `/standard-library/registry`。
+
+---
+
+## 4. 界面清单（按页面）
+
+### 4.1 模块入口 `/standard-library`
+
+- **功能**：无独立概览页；进入模块即重定向到 **标准入库与查询**（`/standard-library/registry`）。
+
+### 4.2 行业分类体系 `/standard-library/taxonomy`
+
+- **功能**：顶栏下载 CSV 模板、打开弹窗上传 ICS/CCS 分类表；左栏 Segmented 切换体系、搜索框与筛选（一级类目 / 含子类目 / 仅看现行）、当前体系统计量；右栏树形表格展示分类号、名称、层级与操作占位；检索可触发预留 `query` 接口并在有数据时展示对照表。
+- **操作**：与参考工作台布局一致；导入成功后可刷新「最后更新」时间。
+- **空态**：演示树可展开；接口无数据时仅依赖本地示例与提示。
+
+### 4.3 标准入库与查询 `/standard-library/registry`
+
+- **功能**：库内统计卡片；标准元数据**批量**入库（多文件上传 + 提交，接口待后端）；关键字速查（`basic-search`）；分页目录（`standards/`）与详情抽屉；导出等待实现。
+- **操作**：刷新统计、提交批量入库、速查检索、ProTable 筛选分页、行内详情。
+- **空态**：列表无数据时按后端分页空态处理。
+
+### 4.4 国标正文入库 `/standard-library/body`
+
+- **功能**：单本或批量上传国标文档，调用后端工作流完成正文入库（接口待后端）；可选填标准号；折叠区保留前言解析、全文下载等已有能力；技术指标 Tab 为只读演示。
+- **操作**：选择文件、提交单本/批量任务；前言区上传与状态轮询。
+- **加载/失败**：工作流未实现时常见 404，前端提示联调。
+
+### 4.5 标准谱系 `/standard-library/lineage`
+
+- **功能**：输入标准号后「查询谱系」并行加载 `get_tree_data` 与 `check-latest`；展示家族内全部节点、关系列表与 ECharts 谱系图；查新摘要单独 Tab。
+- **写能力**：单条表单提交、可编辑表格批量提交、CSV 导入与模板下载；关系列表行内「修改」（Modal）与「删除」（确认）；写库走预留 `pedigree/relation-mutation` 与 `pedigree/relations/batch`，成功后自动再次查询刷新。
+- **空态**：族谱或查新失败时分别提示；无节点/边时图为空或孤立点。
+
+---
+
+## 5. 布局与组件级建议
+
+| 区域类型 | 建议 | 组件倾向 |
+|----------|------|----------|
+| 大数据列表 | 上筛选、下表格 | `ProTable`，`scroll` 与分页由后端驱动 |
+| 分类树 | 左树右详情 | `Tree` / `DirectoryTree` + 右侧 `Card`/`Descriptions` |
+| 元数据表单 | 抽屉或独立页 | `Drawer` + `ProForm` |
+| 正文结果 | 左目录树 + 右内容 | `Layout.Sider` + `Typography` 或富文本区 |
+| 谱系 | 简单关系用表；复杂用图 | `Table` 或 `@ant-design/charts` / 第三方图（评审后定） |
+| 解析进度 | 顶部通栏 | `Steps` + `Progress` |
+
+**禁止**：在元数据、正文、谱系等列表中一次渲染超大量行（如十万行）；一律分页或虚拟滚动 + 后端分页。
+
+---
+
+## 6. 权限与可见性
+
+- 默认按「已登录管理员」设计；细粒度（仅超管可删库、仅操作员可录入等）以后端角色为准。
+- 删除分类、批量覆盖导入、删除谱系关系等使用 **`Modal.confirm`**，文案与后端错误码对齐。
+
+---
+
+## 7. 非功能与体验
+
+- **正文解析**：超过数秒的步骤必须显示进度，避免白屏与重复点击（与需求 10.1 异步反馈一致）。
+- **检索**：复杂条件折叠在「展开更多」中，减少首屏压力。
+- **可访问性**：表格提供列宽拖动或关键列固定（按产品要求）。
+
+---
+
+## 8. 后端接口对照（摘自《后端接口说明文档》）
+
+下列接口在现行文档中已描述，**可用于本模块界面**（基址 `…/api/`，与前端 `VITE_API_BASE_URL` 一致）。未列出的能力（如独立「行业分类配置」专用 CRUD）文档中**尚未出现**对应路径，需后端补充或走 Django Admin。
+
+### 8.1 国标元数据 / 标准主数据
+
+| 方法 | 路径 | 用途（界面落点） | 备注 |
+|------|------|------------------|------|
+| GET | `/api/standards/` | 元数据分页列表、筛选 | Query：`page`、`ex_state`、`search`（`bz_id`/`bz_name` 模糊） |
+| POST / PATCH / PUT / DELETE | `/api/standards/`、`/api/standards/{id}/` | 新建、更新、删除单条标准 | 见文档 §3 资源级 CRUD |
+| GET | `/api/standards/detail-info/` | 标准详情卡片（CCS、ICS、起草单位等） | Query：**必填** `bz_id` |
+| GET | `/api/detail_info/` | `DetailInfo` 资源分页列表 | 与 `detail-info` 单条查询互补 |
+
+### 8.2 检索、统计、模糊查新（工作台能力）
+
+| 方法 | 路径 | 用途（界面落点） | 备注 |
+|------|------|------------------|------|
+| GET | `/api/standards/basic-search/` | 关键字模糊检索（表格/下拉数据源） | Query：`q`，空则返回空数组 |
+| GET | `/api/standards/statistics/` | **标准库状态统计**（类型 GB/QB/…、状态现行/废止/即将实施计数） | 对应「查询统计」页图表/卡片 |
+| POST | `/api/standards/batch-fuzzy-check/` | 批量模糊查新 | Body：`{ "keywords": ["…"] }`；返回 `isLatest`/`latestId` 等 |
+| GET | `/api/statistics/` | `Statistical` 模型分页列表 | **不同于** `standards/statistics/`，勿混用 |
+
+### 8.3 谱系与关系
+
+| 方法 | 路径 | 用途（界面落点） | 备注 |
+|------|------|------------------|------|
+| GET | `/api/standards/check-latest/` | 单标准是否最新、谱系链条摘要 | Query：**必填** `bz_id`；无包装 `code` 的成功体 |
+| GET | `/api/get_tree_data/` | **族谱图**节点与边（ECharts） | Query：**必填** `bz_id`；`nodes`/`links`、`relation_type` |
+| GET | `/api/relations/` | 标准关系边分页列表 | 替代/废止等关系维护的数据源之一 |
+| GET | `/api/replaces_table/` | 替代关系表分页 | 与谱系页、列表联动 |
+
+### 8.4 目录 / 索引 / 正文相关
+
+| 方法 | 路径 | 用途（界面落点） | 备注 |
+|------|------|------------------|------|
+| GET | `/api/indexes_table/` | 索引表分页 | Query：分页；`index_type` 精确过滤 |
+| GET | `/api/standards/download-doc/` | 下载标准 **PDF**（本地文档库） | Query：**必填** `bz_id`；返回二进制流 |
+| GET | `/api/dify/preface-diff/` | 前言解析状态 / 差异结果 | Query：**必填** `bz_id`；`status`：`ready`/`extracting`/`file_missing` 等 |
+| POST | `/api/dify/preface-upload/` | 上传前言 PDF 并触发解析 | `multipart`：`bz_id` + `file`；标准须已在 `StdBase` 注册 |
+
+### 8.5 本模块规划与文档缺口
+
+- **行业分类（ICS/CCS/自定义）独立维护**：当前说明文档**未给出**单独分类资源路径；`detail-info` 中含 `ccs`/`ics` 字段，可部分支撑展示，**分类树 CRUD** 需确认是否仅 `/admin` 或待补 API。
+- **合规 Excel 导出** `GET|POST /api/standards/export-report/`：文档标注为**合规审查**导出，界面归属更贴近**合规评价/工作台**，一般不放在标准库管理主流程，除非产品明确要求入口放在本模块。
+
+### 8.6 不宜归入本模块的接口（避免混用）
+
+| 路径 | 说明 |
+|------|------|
+| `/api/standards/warning-trace/` | 预警追溯，面向**预警**场景 |
+| `/api/standards/dashboard-alerts/` | **仪表盘**大屏预警 |
+| `GET /api/warnings/`、`POST /api/warnings/scan` 等 | **实时预警**业务线 |
+
+---
+
+## 附录：流程结构示意（文档用）
+
+```mermaid
+flowchart LR
+  Entry["/standard-library"] -->|重定向| Reg["/registry 入库与查询"]
+  Reg -.- Other["同模块：/lineage · /body · /taxonomy"]
+```
