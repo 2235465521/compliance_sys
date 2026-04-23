@@ -54,17 +54,18 @@ export async function fetchStatistics(): Promise<StatisticsData> {
   }
 }
 
-/** GET /api/warnings/list — 获取预警列表 */
-export async function fetchWarnings(): Promise<WarningListResponse> {
+/** GET /api/standards/dashboard-alerts/ — 获取仪表盘的即将实施和近期废止数据 */
+export async function fetchDashboardAlerts(): Promise<{ upcoming: any[]; abolished: any[] }> {
   try {
-    const res = await request.get<WarningListResponse>('/warnings/list')
-    if ((res.data as any).code === 200 && (res.data as any).data) {
-       return (res.data as any).data
+    const res = await request.get('/standards/dashboard-alerts/')
+    const data = res.data?.data || (res as any).data
+    return {
+       upcoming: data?.upcoming || [],
+       abolished: data?.abolished || []
     }
-    return res.data
   } catch (error) {
-    console.error('[dashboard] 预警接口异常', error)
-    return { success: true, unread_count: 0, data: [] }
+    console.error('[dashboard] 预警聚合接口异常', error)
+    return { upcoming: [], abolished: [] }
   }
 }
 

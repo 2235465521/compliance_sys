@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, Input, Tag, Space, Button, message, Table } from "antd";
-import { SearchOutlined, DownloadOutlined } from "@ant-design/icons";
+import { SearchOutlined } from "@ant-design/icons";
 import { searchStandards } from "@/services/dashboard";
 // 注意：如果你的 BasicSearchResult 类型没有 release_date 和 implement_time，
 // 记得去 '@/types/dashboard' 里补上这两个字段哦！
