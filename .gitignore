@@ -7,10 +7,16 @@
 **/.env
 **/.env.local
 **/.env.*.local
+**/.env.development
 
 # 日志与本地配置
 *.log
 *.local
+
+# 本地缓存/数据（勿提交）
+npm-cache/
+frontend/npm-cache/
+data/
 
 # 系统与编辑器
 .DS_Store
