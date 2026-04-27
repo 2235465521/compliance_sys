@@ -6,6 +6,7 @@ const menuKeys = [
   { key: '/standard-library/registry', label: '标准入库与查询' },
   { key: '/standard-library/lineage', label: '标准谱系' },
   { key: '/standard-library/body', label: '国标正文入库' },
+  { key: '/standard-library/index-ingest', label: '国标指标入库' },
   { key: '/standard-library/taxonomy', label: '行业分类体系' },
 ] as const
 

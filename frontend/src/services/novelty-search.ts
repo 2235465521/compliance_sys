@@ -5,9 +5,12 @@
  * 在后端说明文档中尚未覆盖，本文件全部走内存 Store + 人工延迟，便于界面联调与验收。
  * 对接真实 API 时：将下列函数改为 request 调用，并删除或收窄 Mock 分支。
  */
+import request from './request'
+import type { PaginatedResponse, StandardItem } from '@/types/dashboard'
 import { applyParsingCompleteForDemo, useNoveltyStore } from '@/stores/novelty-search'
 import type {
   CreateTaskFromFormInput,
+  CreateTaskFromNationalInput,
   CreateTaskFromUploadInput,
   NoveltyTask,
   ReferenceSheetRow,
@@ -18,6 +21,31 @@ const MOCK_LATENCY_MS = 280
 
 function delay(ms = MOCK_LATENCY_MS) {
   return new Promise((r) => setTimeout(r, ms))
+}
+
+/**
+ * 按企标号在标准库（StdBase）中检索：GET /api/standards/?bz_id=…
+ * 与《后端接口文档》2.1 列表/搜索标准一致；失败时返回空数组（由界面提示）。
+ */
+export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<StandardItem[]> {
+  const q = bzId.trim()
+  if (!q) return []
+  try {
+    const res = await request.get<PaginatedResponse<StandardItem> | Record<string, unknown>>('/standards/', {
+      params: { bz_id: q, page_size: 100 },
+    })
+    const data = res.data as Record<string, unknown>
+    if (data?.code === 200 && data?.data && typeof data.data === 'object') {
+      const inner = data.data as { results?: StandardItem[] }
+      return Array.isArray(inner.results) ? inner.results : []
+    }
+    if (Array.isArray((data as PaginatedResponse<StandardItem>)?.results)) {
+      return (data as PaginatedResponse<StandardItem>).results
+    }
+    return []
+  } catch {
+    return []
+  }
 }
 
 export async function fetchTaskList(): Promise<NoveltyTask[]> {
@@ -43,6 +71,12 @@ export async function createTaskFromUpload(input: CreateTaskFromUploadInput): Pr
 export async function createTaskFromForm(input: CreateTaskFromFormInput): Promise<NoveltyTask> {
   await delay()
   return useNoveltyStore.getState().addTaskFromForm(input)
+}
+
+/** MOCK: 上传国标通道（顿号分隔多国标，演示「最新版」映射） */
+export async function createTaskFromNational(input: CreateTaskFromNationalInput): Promise<NoveltyTask> {
+  await delay()
+  return useNoveltyStore.getState().addTaskFromNational(input)
 }
 
 /** MOCK: 保存专用表草稿 */

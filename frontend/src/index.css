@@ -705,20 +705,40 @@ body,
 
 .tplarch-filterbar .ant-input,
 .tplarch-filterbar .ant-input-affix-wrapper,
+.tplarch-filterbar .ant-input-affix-wrapper > input.ant-input,
 .tplarch-filterbar .ant-select-selector,
 .tplarch-filterbar .ant-picker {
   border-radius: 12px !important;
-  background: #f1f4f8 !important;
+  background: #ffffff !important;
   border-color: #dbe3ef !important;
 }
 
-.tplarch-filterbar .ant-input:focus,
+/* 聚焦环只套在外层容器上；内层 input 不再加 border/shadow，避免出现「双椭圆」 */
 .tplarch-filterbar .ant-input-affix-wrapper-focused,
 .tplarch-filterbar .ant-select-focused .ant-select-selector,
 .tplarch-filterbar .ant-picker-focused {
   background: #ffffff !important;
   border-color: #5aa0ff !important;
   box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.14) !important;
+}
+
+.tplarch-filterbar .ant-input-affix-wrapper > input.ant-input,
+.tplarch-filterbar .ant-input-affix-wrapper > textarea.ant-input {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.tplarch-filterbar .ant-input-affix-wrapper .ant-input:focus,
+.tplarch-filterbar .ant-input-affix-wrapper-focused > input.ant-input {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* 悬停时略加深边框，便于识别可编辑 */
+.tplarch-filterbar .ant-input:hover,
+.tplarch-filterbar .ant-select:not(.ant-select-disabled):hover .ant-select-selector,
+.tplarch-filterbar .ant-picker:hover {
+  border-color: #c5d0e0 !important;
 }
 
 .tplarch-filterbar .ant-btn {
@@ -796,6 +816,27 @@ body,
 .tplarch-tablecard .ant-table-tbody > tr > td {
   padding-top: 14px;
   padding-bottom: 14px;
+}
+
+/* 模板与存档合并表：任务/文件列多行展示，避免全局单行省略把标题压成「任…」 */
+.tplarch-archive-cell-titles {
+  min-width: 300px;
+}
+
+.tplarch-archive-cell-titles .tplarch-row-title {
+  align-items: flex-start;
+}
+
+.tplarch-archive-cell-titles .tplarch-row-title-text {
+  white-space: normal;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: unset;
+  line-height: 1.45;
+}
+
+.tplarch-archive-cell-module .ant-space {
+  max-width: 100%;
 }
 
 .tplarch-preview pre {

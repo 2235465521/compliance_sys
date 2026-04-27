@@ -1,8 +1,7 @@
 import { Card, Tabs, Typography } from 'antd'
 import { useState } from 'react'
+import { ArchiveAndDownloadsTab } from './components/ArchiveAndDownloadsTab'
 import { ArchivePreviewModal } from './components/ArchivePreviewModal'
-import { DownloadCenterPanel } from './components/DownloadCenterPanel'
-import { HistoryRecordsPanel } from './components/HistoryRecordsPanel'
 import { TemplateConfigPanel } from './components/TemplateConfigPanel'
 
 type PreviewState = {
@@ -31,7 +30,7 @@ export default function TemplateArchivePage() {
           模板与存档
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          在此管理报告模板、查询历史存档记录，并在下载中心获取已生成的文件。
+          在此管理报告模板；历史存档与已生成文件下载集中在「存档与下载」中查看。
         </Typography.Paragraph>
       </Card>
 
@@ -45,14 +44,9 @@ export default function TemplateArchivePage() {
               children: <TemplateConfigPanel onPreview={openPreview} />,
             },
             {
-              key: 'records',
-              label: '历史记录',
-              children: <HistoryRecordsPanel onPreview={openPreview} />,
-            },
-            {
-              key: 'downloads',
-              label: '下载中心',
-              children: <DownloadCenterPanel onPreview={openPreview} />,
+              key: 'archive',
+              label: '存档与下载',
+              children: <ArchiveAndDownloadsTab onPreview={openPreview} />,
             },
           ]}
         />

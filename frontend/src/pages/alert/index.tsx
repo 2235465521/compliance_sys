@@ -444,6 +444,8 @@ const AlertPage: React.FC = () => {
 
   // 状态管理
   const [activeTab, setActiveTab] = useState<string>('reverse-alert'); // 默认显示反向预警
+  /** 标题旁铃铛：首次点过后停止晃动并隐藏角标 */
+  const [headerBellAcknowledged, setHeaderBellAcknowledged] = useState(false);
   /** 与正向解析兜底、详情弹窗等同步的预警快照（仅通过 setWarnings 更新） */
   const [, setWarnings] = useState<WarningItem[]>([]);
   const [forwardWarnings, setForwardWarnings] = useState<EnterpriseAnalysisResult[]>([]); // 正向预警结果
@@ -1579,8 +1581,7 @@ const AlertPage: React.FC = () => {
 
     // 直连后端（你最早抓到能出 results 的地址）：直连 8000 时通常不需要/不接受 ?token=...
     // 这里强制不拼 token，避免后端拒绝 query token 导致立刻断开。
-    candidates.push({ url: `ws://127.0.0.1:8000/ws/dify_results/`, useToken: false });
-    candidates.push({ url: `ws://localhost:8000/ws/dify_results/`, useToken: false });
+    candidates.push({ url: `ws://192.168.10.28:8000/ws/dify_results/`, useToken: false });
 
     if (API_BASE_URL && API_BASE_URL.startsWith('http')) {
       try {
@@ -1838,81 +1839,124 @@ const AlertPage: React.FC = () => {
               borderBottom: '1px solid rgba(22, 119, 255, 0.08)'
             }}
           >
-            <Row justify="space-between" align="middle" gutter={[16, 16]}>
-              <Col xs={24} lg={14}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-                  <div
-                    style={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 12,
-                      background: 'linear-gradient(145deg, #1677ff 0%, #4096ff 100%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#fff',
-                      fontSize: 22,
-                      flexShrink: 0,
-                      boxShadow: '0 4px 12px rgba(22, 119, 255, 0.35)'
-                    }}
-                  >
-                    <BellOutlined />
-                  </div>
-                  <div>
-                    <Title level={3} style={{ margin: '0 0 6px' }}>
-                      预警系统
-                    </Title>
-                    <Text type="secondary" style={{ fontSize: 14 }}>
-                      实时监控企业标准与国家标准的合规性变化
-                    </Text>
-                  </div>
-                </div>
-              </Col>
-              <Col
-                xs={24}
-                lg={10}
+            <style>{`
+              @keyframes alert-header-bell-swing {
+                0%, 100% { transform: rotate(0deg); }
+                15% { transform: rotate(-16deg); }
+                30% { transform: rotate(14deg); }
+                45% { transform: rotate(-12deg); }
+                60% { transform: rotate(10deg); }
+                75% { transform: rotate(-6deg); }
+                90% { transform: rotate(3deg); }
+              }
+              .alert-header-bell-wrap {
+                display: inline-flex;
+                align-items: center;
+                flex-shrink: 0;
+                animation: alert-header-bell-swing 0.95s ease-in-out infinite;
+                filter: drop-shadow(0 3px 8px rgba(250, 173, 20, 0.45));
+                transform-origin: 50% 10%;
+              }
+              .alert-header-bell-icon {
+                display: inline-flex;
+                align-items: center;
+                color: #faad14;
+                font-size: 28px;
+                vertical-align: middle;
+              }
+            `}</style>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+              <div
                 style={{
-                  textAlign: 'right',
+                  width: 48,
+                  height: 48,
+                  borderRadius: 12,
+                  background: 'linear-gradient(145deg, #1677ff 0%, #4096ff 100%)',
                   display: 'flex',
-                  justifyContent: 'flex-end',
-                  alignItems: 'center'
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                  fontSize: 22,
+                  flexShrink: 0,
+                  boxShadow: '0 4px 12px rgba(22, 119, 255, 0.35)'
                 }}
               >
-                <Badge count={100} overflowCount={99} size="small" offset={[6, 0]}>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label="打开预警列表"
-                    title="预警列表"
-                    onClick={() => setActiveTab('alert-list')}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setActiveTab('alert-list');
-                      }
-                    }}
+                <BellOutlined />
+              </div>
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    marginBottom: 6,
+                    columnGap: 28,
+                    rowGap: 8
+                  }}
+                >
+                  <Title
+                    level={3}
+                    style={{ margin: 0, width: 'max-content', maxWidth: '100%', flexShrink: 0 }}
+                  >
+                    预警系统
+                  </Title>
+                  <div
+                    className="alert-header-bell-wrap"
                     style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: 6,
-                      borderRadius: 10,
-                      cursor: 'pointer',
-                      color: '#faad14',
-                      transition: 'background 0.2s, transform 0.15s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(250, 173, 20, 0.12)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'transparent';
+                      marginLeft: 12,
+                      ...(headerBellAcknowledged ? { animation: 'none' } : undefined)
                     }}
                   >
-                    <BulbOutlined style={{ fontSize: 22 }} />
-                  </span>
-                </Badge>
-              </Col>
-            </Row>
+                    <Badge
+                      count={headerBellAcknowledged ? 0 : 100}
+                      overflowCount={99}
+                      size="small"
+                      offset={[8, -4]}
+                      showZero={false}
+                    >
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label="打开预警列表"
+                        title="预警列表"
+                        onClick={() => {
+                          setHeaderBellAcknowledged(true);
+                          setActiveTab('alert-list');
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setHeaderBellAcknowledged(true);
+                            setActiveTab('alert-list');
+                          }
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 4,
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          color: '#faad14',
+                          transition: 'background 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(250, 173, 20, 0.12)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <BellOutlined className="alert-header-bell-icon" aria-hidden />
+                      </span>
+                    </Badge>
+                  </div>
+                </div>
+                <Text type="secondary" style={{ fontSize: 14 }}>
+                  实时监控企业标准与国家标准的合规性变化
+                </Text>
+              </div>
+            </div>
           </div>
         </Card>
 

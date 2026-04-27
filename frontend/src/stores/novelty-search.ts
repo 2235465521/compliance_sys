@@ -11,9 +11,12 @@ function newId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-/** 任务标题：企业名称 + 日期（与产品约定一致，不由用户填写） */
-function buildTaskTitle(enterpriseName: string) {
-  return `${enterpriseName.trim()} ${dayjs().format('YYYY-MM-DD')}`
+/** 任务标题：优先企标号 + 日期；无则「查新任务」+ 日期 */
+function buildTaskTitle(opts: { enterpriseStdNo?: string }) {
+  const std = opts.enterpriseStdNo?.trim()
+  const d = dayjs().format('YYYY-MM-DD')
+  if (std) return `${std} ${d}`
+  return `查新任务 ${d}`
 }
 
 function parseStdNos(text: string): string[] {
@@ -21,6 +24,24 @@ function parseStdNos(text: string): string[] {
     .split(/[\n,，;；\s]+/)
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+/** 国标录入：以顿号「、」为主，兼容纳逗号分号 */
+function parseNationalStdNos(text: string): string[] {
+  return text
+    .split(/[、,，;；]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** 演示：将输入标准号映射为「现行最新版」展示用 */
+function mockNationalLatestVersion(inputNo: string): string {
+  const t = inputNo.trim()
+  if (!t) return t
+  if (t.includes('2016')) return t.replace(/2016/g, '2020')
+  if (t.includes('2008')) return t.replace(/2008/g, '2018')
+  if (t.includes('1999')) return t.replace(/1999/g, '2009')
+  return `${t}（现行）`
 }
 
 function mockSheetFromStdNos(nos: string[]): ReferenceSheetRow[] {
@@ -79,8 +100,9 @@ interface NoveltyStore {
   updateTask: (id: string, patch: Partial<NoveltyTask>) => void
   getTask: (id: string) => NoveltyTask | undefined
   /** 创建后进入解析演示态 */
-  addTaskFromUpload: (input: { enterpriseName: string; enterpriseStdNo: string; fileName: string }) => NoveltyTask
-  addTaskFromForm: (input: { enterpriseName: string; enterpriseStdNo: string; stdNosText: string }) => NoveltyTask
+  addTaskFromUpload: (input: { enterpriseStdNo: string; fileName: string }) => NoveltyTask
+  addTaskFromForm: (input: { enterpriseStdNo: string; stdNosText: string }) => NoveltyTask
+  addTaskFromNational: (input: { nationalStdNosText: string }) => NoveltyTask
   saveReferenceDraft: (id: string, rows: ReferenceSheetRow[]) => void
   confirmReferenceSheet: (id: string) => void
   setReportState: (id: string, state: ReportState, generatedAt?: string) => void
@@ -110,12 +132,12 @@ export const useNoveltyStore = create<NoveltyStore>((set, get) => ({
   addTaskFromUpload: (input) => {
     const id = newId('ns')
     const t = nowIso()
-    const en = input.enterpriseName.trim()
+    const stdNo = input.enterpriseStdNo.trim()
     const task: NoveltyTask = {
       id,
-      title: buildTaskTitle(en),
-      enterpriseName: en,
-      enterpriseStdNo: input.enterpriseStdNo.trim(),
+      title: buildTaskTitle({ enterpriseStdNo: stdNo }),
+      enterpriseName: '',
+      enterpriseStdNo: stdNo,
       status: 'parsing',
       source: 'upload',
       fileName: input.fileName,
@@ -135,12 +157,12 @@ export const useNoveltyStore = create<NoveltyStore>((set, get) => ({
     const id = newId('ns')
     const t = nowIso()
     const nos = parseStdNos(input.stdNosText)
-    const en = input.enterpriseName.trim()
+    const stdNo = input.enterpriseStdNo.trim()
     const task: NoveltyTask = {
       id,
-      title: buildTaskTitle(en),
-      enterpriseName: en,
-      enterpriseStdNo: input.enterpriseStdNo.trim(),
+      title: buildTaskTitle({ enterpriseStdNo: stdNo }),
+      enterpriseName: '',
+      enterpriseStdNo: stdNo,
       status: 'pending_confirm',
       source: 'form',
       formStdNos: nos,
@@ -148,6 +170,37 @@ export const useNoveltyStore = create<NoveltyStore>((set, get) => ({
       updatedAt: t,
       sheetConfirmed: false,
       referenceSheet: nos.length ? mockSheetFromStdNos(nos) : [],
+      compareRows: [],
+      compareDone: 0,
+      reportState: 'none',
+    }
+    get().upsertTask(task)
+    return task
+  },
+
+  addTaskFromNational: (input) => {
+    const id = newId('ns')
+    const t = nowIso()
+    const inputs = parseNationalStdNos(input.nationalStdNosText)
+    const latestNos = inputs.map(mockNationalLatestVersion)
+    const sheet: ReferenceSheetRow[] = inputs.map((raw, i) => ({
+      id: newId('row'),
+      stdNo: latestNos[i] ?? raw,
+      stdName: `输入：${raw} → 现行最新（演示）：${latestNos[i] ?? raw}`,
+      remark: '来自「上传国标」',
+    }))
+    const task: NoveltyTask = {
+      id,
+      title: buildTaskTitle({ enterpriseStdNo: inputs[0] }),
+      enterpriseName: '',
+      enterpriseStdNo: '—',
+      status: 'pending_confirm',
+      source: 'national',
+      formStdNos: latestNos,
+      createdAt: t,
+      updatedAt: t,
+      sheetConfirmed: false,
+      referenceSheet: sheet,
       compareRows: [],
       compareDone: 0,
       reportState: 'none',

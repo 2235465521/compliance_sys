@@ -14,6 +14,7 @@ import NoveltySearchLayout from '@/pages/novelty-search/Layout'
 import TaskDetailPage from '@/pages/novelty-search/tasks/TaskDetailPage'
 import StandardLibraryBodyIngestPage from '@/pages/standard-library/body'
 import StandardLibraryIndexRedirect from '@/pages/standard-library'
+import StandardLibraryIndexIngestPage from '@/pages/standard-library/index-ingest'
 import StandardLibraryLayout from '@/pages/standard-library/Layout'
 import StandardLibraryLineagePage from '@/pages/standard-library/lineage'
 import StandardLibraryRegistryPage from '@/pages/standard-library/standards'
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
           { path: 'registry', element: <StandardLibraryRegistryPage /> },
           { path: 'lineage', element: <StandardLibraryLineagePage /> },
           { path: 'body', element: <StandardLibraryBodyIngestPage /> },
+          { path: 'index-ingest', element: <StandardLibraryIndexIngestPage /> },
           { path: 'taxonomy', element: <StandardLibraryTaxonomyPage /> },
         ],
       },
