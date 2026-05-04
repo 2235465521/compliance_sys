@@ -18,7 +18,10 @@ import StandardLibraryLayout from '@/pages/standard-library/Layout'
 import StandardLibraryLineagePage from '@/pages/standard-library/lineage'
 import StandardLibraryRegistryPage from '@/pages/standard-library/standards'
 import StandardLibraryTaxonomyPage from '@/pages/standard-library/taxonomy'
-import SystemPage from '@/pages/system'
+import SystemAuditLogPage from '@/pages/system/audit-log'
+import SystemLayout from '@/pages/system/Layout'
+import SystemRolesPage from '@/pages/system/roles'
+import SystemUsersPage from '@/pages/system/users'
 import TemplateArchivePage from '@/pages/template-archive'
 
 export const router = createBrowserRouter([
@@ -61,7 +64,16 @@ export const router = createBrowserRouter([
         ],
       },
       { path: 'template-archive', element: <TemplateArchivePage /> },
-      { path: 'system', element: <SystemPage /> },
+      {
+        path: 'system',
+        element: <SystemLayout />,
+        children: [
+          { index: true, element: <Navigate to="/system/users" replace /> },
+          { path: 'users', element: <SystemUsersPage /> },
+          { path: 'roles', element: <SystemRolesPage /> },
+          { path: 'audit-log', element: <SystemAuditLogPage /> },
+        ],
+      },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },
