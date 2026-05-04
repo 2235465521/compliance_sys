@@ -64,10 +64,11 @@ export default function NoveltyTaskListPage() {
       rows = rows.filter(
         (t) =>
           t.title.includes(kw) ||
-          t.enterpriseName.includes(kw) ||
+          (t.enterpriseName || '').includes(kw) ||
           t.enterpriseStdNo.includes(kw) ||
           t.id.includes(kw) ||
-          (t.fileName?.includes(kw) ?? false),
+          (t.fileName?.includes(kw) ?? false) ||
+          (t.formStdNos?.some((n) => n.includes(kw)) ?? false),
       )
     }
     if (applied.status) {
@@ -115,6 +116,7 @@ export default function NoveltyTaskListPage() {
       key: 'enterprise',
       ellipsis: true,
       width: 200,
+      render: (v: string) => v?.trim() || '—',
     },
     {
       title: '状态',
@@ -130,7 +132,12 @@ export default function NoveltyTaskListPage() {
       title: '来源',
       key: 'source',
       width: 120,
-      render: (_, row) => (row.source === 'upload' ? '企标上传' : '标准号录入'),
+      render: (_, row) =>
+        row.source === 'upload'
+          ? '企标上传'
+          : row.source === 'national'
+            ? '上传国标'
+            : '标准号录入',
     },
     {
       title: '创建时间',

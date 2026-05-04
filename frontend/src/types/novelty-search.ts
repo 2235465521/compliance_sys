@@ -7,7 +7,7 @@ export type NoveltyTaskStatus =
   | 'completed'
   | 'failed'
 
-export type NoveltyTaskSource = 'upload' | 'form'
+export type NoveltyTaskSource = 'upload' | 'form' | 'national'
 
 /** 比对三态 + 兜底 */
 export type CompareConclusion = 'active' | 'obsolete' | 'incoming' | 'unknown' | 'pending'
@@ -60,7 +60,6 @@ export interface NoveltyTask {
 }
 
 export interface CreateTaskFromUploadInput {
-  enterpriseName: string
   /** 企标号，必填 */
   enterpriseStdNo: string
   /** 仅演示：文件名，真实环境应上传至对象存储并由后端返回 fileId */
@@ -68,9 +67,14 @@ export interface CreateTaskFromUploadInput {
 }
 
 export interface CreateTaskFromFormInput {
-  enterpriseName: string
   /** 企标号，必填 */
   enterpriseStdNo: string
   /** 每行一个标准号或逗号分隔 */
   stdNosText: string
+}
+
+/** 上传国标：多个国标用顿号「、」分隔，演示环境本地解析「最新版」 */
+export interface CreateTaskFromNationalInput {
+  /** 国标列表原文，如 GB/T 601-2016、GB/T 602-2016 */
+  nationalStdNosText: string
 }

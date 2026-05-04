@@ -220,11 +220,15 @@ export default function TaskDetailPage() {
 
         <Card size="small">
           <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="企业">{task.enterpriseName}</Descriptions.Item>
+            <Descriptions.Item label="企业">{task.enterpriseName?.trim() || '—'}</Descriptions.Item>
             <Descriptions.Item label="企标号">{task.enterpriseStdNo}</Descriptions.Item>
             <Descriptions.Item label="任务标题">{task.title}</Descriptions.Item>
             <Descriptions.Item label="来源">
-              {task.source === 'upload' ? `企标上传${task.fileName ? `（${task.fileName}）` : ''}` : '标准号录入'}
+              {task.source === 'upload'
+                ? `企标上传${task.fileName ? `（${task.fileName}）` : ''}`
+                : task.source === 'national'
+                  ? '上传国标'
+                  : '标准号录入'}
             </Descriptions.Item>
             <Descriptions.Item label="创建时间">{task.createdAt.replace('T', ' ').slice(0, 19)}</Descriptions.Item>
           </Descriptions>

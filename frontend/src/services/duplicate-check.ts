@@ -12,7 +12,7 @@ import { downloadBlob } from '@/utils/download'
  * - 二审（AI 语义）：POST /api/duplicate/semantic-check/
  *
  * axios baseURL 默认为 `VITE_API_BASE_URL` 或 `/api`，故此处路径不再带 `/api` 前缀。
- * 联调局域网时可在 `.env` 配置：`VITE_API_BASE_URL=http://192.168.10.218:端口/api`
+ * 联调局域网时可在 `.env` 配置：`VITE_API_BASE_URL=http://192.168.10.28:8000/api`
  */
 
 const DUPLICATE_NAME_CHECK = '/duplicate/name-check/'

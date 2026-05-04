@@ -19,7 +19,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload/interface'
-import { SaveOutlined, UploadOutlined } from '@ant-design/icons'
+import { DownloadOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import {
   checkLatestStandard,
   exportComplianceReport,
@@ -34,6 +34,10 @@ import {
   type StandardLatestCheckResult,
   uploadEnterpriseStandard,
 } from '@/services/compliance'
+import {
+  downloadComplianceConclusionTextReport,
+  safeFilenameSegment,
+} from '@/pages/compliance/utils/stepReportExport'
 
 const { Text } = Typography
 
@@ -2228,6 +2232,48 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       void onExportReport()
     }
 
+    const resolveComplianceExportBzId = () =>
+      descriptiveReview.bzId.trim() || reportBzId.trim() || latestUploadedBzId.trim()
+
+    const exportStepSixDescriptiveReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-描述性评价报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '描述性评价信息', bzId: bz || '-' },
+        summaryDraft.descriptive,
+      )
+      messageApi.success('已导出描述性评价报告')
+    }
+
+    const exportStepSixValidityReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-引用标准有效性报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '引用标准文件有效性及更替信息', bzId: bz || '-' },
+        summaryDraft.validity,
+      )
+      messageApi.success('已导出引用标准有效性报告')
+    }
+
+    const exportStepSixTechnicalReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-技术指标对比报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '技术指标对比详细信息', bzId: bz || '-' },
+        summaryDraft.technical,
+      )
+      messageApi.success('已导出技术指标对比报告')
+    }
+
     const jumpToChecklistStep = (step: number) => {
       setCurrent(step)
       messageApi.info(`已跳转到第 ${step + 1} 步，请先完成该检查项。`)
@@ -2848,24 +2894,45 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                       >
                         <Space direction="vertical" style={{ width: '100%' }} size={10}>
                           <Button onClick={generateSummaryDraftFromWorkflow}>一键生成三项总结草稿</Button>
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="描述性评价信息"
-                            value={summaryDraft.descriptive}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, descriptive: e.target.value }))}
-                          />
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="引用标准文件有效性及更替信息"
-                            value={summaryDraft.validity}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, validity: e.target.value }))}
-                          />
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="技术指标对比详细信息"
-                            value={summaryDraft.technical}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, technical: e.target.value }))}
-                          />
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="描述性评价信息"
+                              value={summaryDraft.descriptive}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, descriptive: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixDescriptiveReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="引用标准文件有效性及更替信息"
+                              value={summaryDraft.validity}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, validity: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixValidityReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="技术指标对比详细信息"
+                              value={summaryDraft.technical}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, technical: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixTechnicalReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
                           <Input
                             placeholder="请输入标准号（bz_id），例如 Q/ABC 001-2026"
                             value={reportBzId}
