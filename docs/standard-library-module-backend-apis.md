@@ -2,6 +2,8 @@
 
 本文档依据 **`frontend/src/services/standard-library.ts`** 及 **`frontend/src/pages/standard-library/**`** 逐页核对：每条接口给出方法、路径（相对 `request` 的 `baseURL`，默认 `VITE_API_BASE_URL` 或 `'/api'`）、封装函数与**实际调用位置**。
 
+以下 **标准入库与查询（registry）** 相关已与后端 **`/api/v1/standards/`** 对齐（即相对 baseURL 为 `v1/standards/`）；谱系、行业分类等仍可为未带 `v1` 前缀的路径，以实现为准。
+
 子模块与路由对应关系见 `frontend/src/pages/standard-library/Layout.tsx`（`/standard-library/registry`、`lineage`、`body`、`index-ingest`、`taxonomy`）。
 
 ---
@@ -10,30 +12,31 @@
 
 **文件：** `frontend/src/pages/standard-library/standards/index.tsx`
 
-| 用途 | 方法 | 路径 | Query / Body | 封装函数 |
-|------|------|------|----------------|----------|
-| 标准列表（DRF 分页） | GET | `standards/` | `page`、`page_size`（当 `pageSize>0` 时）、`search`、`ex_state` | `listStandards` |
-| 标准详情（抽屉） | GET | `standards/detail-info/` | `bz_id` | `fetchDetailInfo` |
-| 库内统计（状态分布等） | GET | `standards/statistics/` | — | `fetchStatistics`；响应需 `code === 200` 包在 `ApiEnvelope` |
-| 元数据批量入库 | POST | `standards/metadata-batch-import/` | `multipart/form-data`，字段 **`files`**（多文件） | `importStandardMetadataBatch` |
+| 用途 | 方法 | 路径（相对 `/api`） | Query / Body | 封装函数 |
+|------|------|----------------------|--------------|----------|
+| 标准列表（DRF 分页） | GET | `v1/standards/` | `page`、`page_size`（当 `pageSize>0` 时）、`search`、`ex_state` | `listStandards` |
+| 标准详情（抽屉） | GET | `v1/standards/detail-info/` | `bz_id` | `fetchDetailInfo` |
+| 库内统计（状态分布等） | GET | `v1/standards/statistics/` | — | `fetchStatistics`；响应需 `code === 200` 包在 `ApiEnvelope` |
+| 元数据批量入库 | POST | `v1/standards/metadata-batch-import/` | `multipart/form-data`，字段 **`files`**（多文件） | `importStandardMetadataBatch` |
+| 导出 | GET | `v1/standards/export/` | — | `exportStandardsMetadata`（Blob；JSON 占位则提示文案） |
+| 模块说明 | GET | `v1/standards/module` | — | `fetchStandardsModule` |
 
-**页面内未对接的后端能力（仅占位 UI）：**
-
-- 「单条入库」弹窗：文案说明需后端创建接口，**当前无请求**。
-- 「导出」按钮：`message.info('导出功能暂未实现')`，**无接口**。
+**工作台/合规等复用：** `dashboard.fetchStandardList` / `fetchStatistics`，`novelty-search.queryStandardsByEnterpriseBzId`，`compliance` 合规任务列表与统计已同步使用 **`v1/standards/`** 列表与 **`v1/standards/statistics/`**。
 
 ---
 
 ## 2. 标准谱系（`/standard-library/lineage`）
 
+**统一说明：** 谱系相关接口均在 **`/api/`** 下（**不是** `/api/v1/`）。Query **`bz_id`** 可与标准列表/详情一致：库内数字 **`id`** 或标准号 **`std_code`（国标号）**。
+
 **文件：** `frontend/src/pages/standard-library/lineage/index.tsx`
 
 | 用途 | 方法 | 路径 | Query / Body | 封装函数 |
 |------|------|------|----------------|----------|
-| 谱系图数据（节点+边） | GET | `get_tree_data/` | `bz_id` | `fetchTreeData`；期望 `ApiEnvelope`，`code === 200` |
-| 是否现行 / 最新标准 / 谱系链文案 | GET | `standards/check-latest/` | `bz_id` | `checkLatest`；成功体为 `CheckLatestOk`（无 `code` 包装）或与错误 `{ code, msg }` |
-| 单条关系增删改 | POST | `standards/pedigree/relation-mutation/` | JSON：`op`（`create` \| `update` \| `delete`）、`source`、`target`；`create`/`update` 时带 `relation_type` | `mutatePedigreeRelation` |
-| 批量新增关系 | POST | `standards/pedigree/relations/batch/` | JSON：`{ items: [{ source, target, relation_type }] }` | `submitPedigreeRelationsBatch` |
+| 谱系图数据（节点+边） | GET | `get_tree_data/` | `bz_id` | **`fetchTreeData`**（成功 **`{ code:200, data:{ nodes, links } }`**，失败 **`{ code, msg }`**）。坐标优先 **`layout_pos`** 或节点顶层 **`x`/`y`**（`fixed` 预设）；否则 **`rank`/`col`→像素。图包 bbox **水平居中、垂直锚点≈上部 36%**。节点显示 **`label` 优先否则 `name`**。边 **`relation_type`** 仅在 **mouseover tooltip** |
+| 是否最新 + 谱系链摘要 | GET | `standards/check-latest/` | `bz_id` | `checkLatest`；**成功**：顶层 **`query_bz_id`、`is_latest`、`current_latest_id`、`pedigree_chain`（字符串数组）**；失败 **`{ code, msg }`** |
+| 单条关系增删改 | POST | `standards/pedigree/relation-mutation/` | JSON：`op`（`create` \| `update` \| `delete`）、`source`、`target`；**create/update 必须** `relation_type`；delete 可按 source+target 删边不传 `relation_type` | `mutatePedigreeRelation`；成功 **`{ code: 200 }`** |
+| 批量新增关系 | POST | `standards/pedigree/relations/batch/` | JSON：`{ items: [{ source, target, relation_type }] }` | `submitPedigreeRelationsBatch`；成功至少 **`code: 200`**，及 **`created` / `skipped`**；可有 **`errors`** |
 
 **查询按钮行为：** 对同一 `bz_id` 并发调用 `fetchTreeData` 与 `checkLatest`（`Promise.allSettled`），再更新图谱与「最新标准」信息。
 
@@ -88,17 +91,19 @@
 
 | 封装函数 | 方法 | 路径 | 标准库子页是否使用 |
 |----------|------|------|---------------------|
-| `listStandards` | GET | `standards/` | 是（registry） |
-| `fetchDetailInfo` | GET | `standards/detail-info/` | 是（registry） |
+| `listStandards` | GET | `v1/standards/` | 是（registry） |
+| `fetchDetailInfo` | GET | `v1/standards/detail-info/` | 是（registry） |
 | `basicSearch` | GET | `standards/basic-search/` | **否**（仓库内无其它文件 import） |
-| `fetchStatistics` | GET | `standards/statistics/` | 是（registry） |
+| `fetchStatistics` | GET | `v1/standards/statistics/` | 是（registry） |
+| `exportStandardsMetadata` | GET | `v1/standards/export/` | 是（registry） |
+| `fetchStandardsModule` | GET | `v1/standards/module` | 是（registry · 文案链） |
 | `checkLatest` | GET | `standards/check-latest/` | 是（lineage） |
 | `fetchTreeData` | GET | `get_tree_data/` | 是（lineage） |
 | `fetchPrefaceDiff` | GET | `dify/preface-diff/` | **否** |
 | `uploadPrefacePdf` | POST | `dify/preface-upload/` | **否** |
 | `downloadStandardPdfBlobUrl` | GET | `standards/download-doc/` | **否** |
 | `listIndexesPage` | GET | `indexes_table/` | **否** |
-| `importStandardMetadataBatch` | POST | `standards/metadata-batch-import/` | 是（registry） |
+| `importStandardMetadataBatch` | POST | `v1/standards/metadata-batch-import/` | 是（registry） |
 | `submitStandardBodyIngestWorkflow` | POST | `workflow/standard-body-ingest/` | **否**（仅 service 与 body 页文案约定） |
 | `importIndustryTaxonomySheet` | POST | `standards/industry-taxonomy/import/` | 是（taxonomy） |
 | `queryIndustryClassification` | GET | `standards/industry-taxonomy/query/` | 是（taxonomy） |
