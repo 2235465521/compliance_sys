@@ -36,7 +36,10 @@ export default function StatsPieChart({ data }: Props) {
     <Card
       title={
         <span style={{ fontSize: 16, fontWeight: 600, color: "#1e293b" }}>
-          标准类型分布
+          标准类别分布{" "}
+          <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
+            （std_category）
+          </Typography.Text>
         </span>
       }
       style={{
@@ -142,7 +145,7 @@ export default function StatsPieChart({ data }: Props) {
           type="secondary"
           style={{ fontSize: 12, color: "#64748b" }}
         >
-          覆盖主流国际标准体系
+          主表字段 std_category 条数汇总
         </Typography.Text>
       </div>
     </Card>

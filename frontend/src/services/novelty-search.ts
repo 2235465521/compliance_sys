@@ -24,14 +24,14 @@ function delay(ms = MOCK_LATENCY_MS) {
 }
 
 /**
- * 按企标号在标准库（StdBase）中检索：GET /api/standards/?bz_id=…
+ * 按企标号在标准库（StdBase）中检索：GET /api/v1/standards/?bz_id=…
  * 与《后端接口文档》2.1 列表/搜索标准一致；失败时返回空数组（由界面提示）。
  */
 export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<StandardItem[]> {
   const q = bzId.trim()
   if (!q) return []
   try {
-    const res = await request.get<PaginatedResponse<StandardItem> | Record<string, unknown>>('/standards/', {
+    const res = await request.get<PaginatedResponse<StandardItem> | Record<string, unknown>>('v1/standards/', {
       params: { bz_id: q, page_size: 100 },
     })
     const data = res.data as Record<string, unknown>

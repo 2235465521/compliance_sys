@@ -22,7 +22,7 @@ import {
 } from 'antd'
 import type { UploadFile, UploadProps } from 'antd/es/upload/interface'
 import zhCN from 'antd/locale/zh_CN'
-import { SL_PAGE_SUBTITLE, SL_PAGE_TITLE } from '@/pages/standard-library/pageHeaderStyles'
+import { SL_PAGE_TITLE } from '@/pages/standard-library/pageHeaderStyles'
 
 /** 分页区文案（与全局 zhCN 一致并显式写出，避免 ProTable 内层未吃到 ConfigProvider） */
 const paginationLocaleZh = {
@@ -44,8 +44,7 @@ import {
   ClockCircleOutlined,
   CloudUploadOutlined,
   DatabaseOutlined,
-  FilterOutlined,
-  PlusOutlined,
+  DownloadOutlined,
   ReloadOutlined,
   StopOutlined,
 } from '@ant-design/icons'
@@ -53,13 +52,121 @@ import * as echarts from 'echarts'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   fetchDetailInfo,
+  downloadMetadataImportTemplate,
   fetchStatistics,
   importStandardMetadataBatch,
   listStandards,
 } from '@/services/standard-library'
 import type { StatisticsPayload, StdBaseRow } from '@/types/standard-library'
 
-const { Title, Text } = Typography
+const { Title, Text, Link } = Typography
+
+/** 正文预览 / 下载：`/api/v1/standards/detail-text/{preview|download}/?bz_id=`（bz_id 已 URL 编码） */
+function standardsDetailTextUrl(kind: 'preview' | 'download', bzId: string): string {
+  const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+  return `${base}/v1/standards/detail-text/${kind}/?bz_id=${encodeURIComponent(bzId)}`
+}
+
+/** 标准详情：主表 14 列（与入库表头一致）；其下为 `national_standard_extension` 拓展字段 */
+const STD_DETAIL_SCHEMA: { key: string; label: string }[] = [
+  { key: 'std_code', label: '国标号' },
+  { key: 'std_name', label: '标准名称' },
+  { key: 'std_status', label: '标准状态' },
+  { key: 'publish_date', label: '发布日期' },
+  { key: 'effective_date', label: '实施日期' },
+  { key: 'abolition_date', label: '废止日期' },
+  { key: 'std_category', label: '标准类别' },
+  { key: 'replaces_std_code', label: '代替标准' },
+  { key: 'replace_type', label: '代替类型' },
+  { key: 'ccs_code', label: '中国标准分类号' },
+  { key: 'ics_code', label: '国际标准分类号' },
+  { key: 'ped_id', label: '谱系号' },
+  { key: 'detail_url', label: '详情链接' },
+  { key: 'std_file_path', label: '国标文件保存路径' },
+  /** national_standard_extension */
+  { key: 'responsible_unit', label: '归口单位/部门' },
+  { key: 'secondary_responsible_unit', label: '副归口单位' },
+  { key: 'issuing_department', label: '颁发部门' },
+  { key: 'executing_unit', label: '执行单位' },
+  { key: 'technical_committee', label: '技术委员会' },
+  { key: 'governing_department', label: '主管部门' },
+  { key: 'adoption_status', label: '采标情况' },
+  { key: 'drafting_unit', label: '起草单位' },
+  { key: 'drafter', label: '起草人' },
+]
+
+function isEmptyDetailValue(v: unknown): boolean {
+  if (v === undefined || v === null) return true
+  if (typeof v === 'string') return !v.trim()
+  return false
+}
+
+function parseEmbeddedObject(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === 'object' && !Array.isArray(v)) {
+    return v as Record<string, unknown>
+  }
+  if (typeof v === 'string' && v.trim()) {
+    try {
+      const parsed = JSON.parse(v) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/** 国标拓展：`national_standard_extension`；兼容详情里嵌在 `extension` 的 JSON（历史结构） */
+function getNationalStandardExtensionRecord(record: Record<string, unknown>): Record<string, unknown> | null {
+  return (
+    parseEmbeddedObject(record.national_standard_extension) ??
+    parseEmbeddedObject(record.extension) ??
+    parseEmbeddedObject(record.std_extension)
+  )
+}
+
+/** 取值：主表顶层 → 拓展嵌套对象 → 主表别名（国标号/名称/状态） */
+function resolveStdDetailField(record: Record<string, unknown>, key: string): unknown {
+  const ext = getNationalStandardExtensionRecord(record)
+
+  const top = record[key]
+  if (!isEmptyDetailValue(top)) return top
+
+  const nested = ext?.[key]
+  if (!isEmptyDetailValue(nested)) return nested
+
+  switch (key) {
+    case 'std_code':
+      return record.stdCode ?? record.bzId ?? record.bz_id
+    case 'std_name':
+      return record.bzName ?? record.stdName ?? record.bz_name
+    case 'std_status':
+      return record.stdStatus ?? record.ex_state
+    case 'std_category':
+      return record.stdCategory ?? record.std_category
+    case 'publish_date':
+      return record.publishDate ?? record.publish_date ?? record.bzReleaseDate ?? record.bz_release_date
+    case 'effective_date':
+      return record.effectiveDate ?? record.effective_date ?? record.implementTime ?? record.implement_time
+    default:
+      return top
+  }
+}
+
+function formatStdDetailValue(v: unknown): ReactNode {
+  if (v === null || v === undefined) return '—'
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v, null, 2)
+    } catch {
+      return String(v)
+    }
+  }
+  const s = String(v)
+  return s.trim() === '' ? '—' : s
+}
 
 function stateAgg(stats: StatisticsPayload | null) {
   const states = stats?.states ?? {}
@@ -241,16 +348,73 @@ function renderExStateTag(state: string | undefined) {
   return <Tag>{state}</Tag>
 }
 
-/** 列表「类别」列：后端字段名不统一，取常见键 */
-function pickCategory(row: StdBaseRow): string {
-  const v =
-    row.bz_type ??
-    row.standard_type ??
-    row.type_name ??
-    (typeof row.category === 'string' ? row.category : undefined) ??
-    row['bz_category']
-  if (v != null && String(v).trim()) return String(v)
+/** 列表标准号：接口以 camelCase 为主（stdCode / bzId），仅少量旧数据回退 bz_id */
+function listRowStdCode(row: StdBaseRow): string | undefined {
+  const v = row.stdCode ?? row.bzId ?? row.bz_id
+  if (v != null && String(v).trim()) return String(v).trim()
+  return undefined
+}
+
+function listRowStdName(row: StdBaseRow): string | undefined {
+  const v = row.bzName ?? row.stdName ?? row.bz_name
+  if (v != null && String(v).trim()) return String(v).trim()
+  return undefined
+}
+
+/** 执行状态：stdStatus（camelCase）为主 */
+function listRowExState(row: StdBaseRow): string | undefined {
+  const v = row.stdStatus ?? row.ex_state
+  if (v != null && String(v).trim()) return String(v).trim()
+  return undefined
+}
+
+/** 标准类别：stdCategory（列表接口 camelCase） */
+function listStdCategoryCell(row: StdBaseRow): string {
+  const v = row.stdCategory ?? row.std_category
+  if (v != null && String(v).trim()) return String(v).trim()
   return '—'
+}
+
+/** 发布日期：bzReleaseDate / publishDate（camelCase） */
+function listBzReleaseDateCell(row: StdBaseRow): string {
+  const v = row.bzReleaseDate ?? row.publishDate ?? row.publish_date ?? row.bz_release_date ?? row.release_date
+  if (v != null && String(v).trim()) return String(v).trim()
+  return ''
+}
+
+/** 实施日期：implementTime / effectiveDate（camelCase） */
+function listImplementDateCell(row: StdBaseRow): string {
+  const v = row.implementTime ?? row.effectiveDate ?? row.implement_time ?? row.effective_date
+  if (v != null && String(v).trim()) return String(v).trim()
+  return ''
+}
+
+/** 批量入库：HTTP 400 时 `detail` 可能为多行摘要，短文用 Message、长文用 Modal 完整展示 */
+function showBatchImportFailureMessage(text: string) {
+  const t = text.trim() || '批量入库失败'
+  if (t.length > 280) {
+    Modal.error({
+      title: '批量入库未通过',
+      width: 680,
+      okText: '知道了',
+      content: (
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            maxHeight: 420,
+            overflow: 'auto',
+            fontSize: 13,
+          }}
+        >
+          {t}
+        </pre>
+      ),
+    })
+  } else {
+    message.error(t)
+  }
 }
 
 export default function StandardLibraryRegistryPage() {
@@ -272,7 +436,10 @@ export default function StandardLibraryRegistryPage() {
   const [batchFileList, setBatchFileList] = useState<UploadFile[]>([])
   const [batchSubmitting, setBatchSubmitting] = useState(false)
   const [batchModalOpen, setBatchModalOpen] = useState(false)
-  const [singleModalOpen, setSingleModalOpen] = useState(false)
+  const [csvTemplateDownloading, setCsvTemplateDownloading] = useState(false)
+  const [moduleModalOpen, setModuleModalOpen] = useState(false)
+  const [moduleLoading, setModuleLoading] = useState(false)
+  const [moduleBody, setModuleBody] = useState<string>('')
 
   const openDetail = useCallback(async (bzId: string) => {
     setDetailBzId(bzId)
@@ -309,7 +476,7 @@ export default function StandardLibraryRegistryPage() {
 
   const uploadProps: UploadProps = {
     multiple: true,
-    accept: '.xlsx,.xls,.csv,.zip',
+    accept: '.xlsx,.xls,.csv',
     fileList: batchFileList,
     beforeUpload: (file) => {
       setBatchFileList((prev) => [...prev, { uid: file.uid, name: file.name, originFileObj: file }])
@@ -329,20 +496,31 @@ export default function StandardLibraryRegistryPage() {
     setBatchSubmitting(true)
     try {
       await importStandardMetadataBatch(files)
-      message.success('批量入库请求已提交')
+      message.success('批量入库已全部成功')
       setBatchFileList([])
       setBatchModalOpen(false)
       void loadStats()
       actionRef.current?.reload()
     } catch (e) {
-      const err = e as Error & { response?: { status?: number } }
-      const hint =
-        err.response?.status === 404
-          ? '批量入库接口尚未在后端实现或路径不一致，请联调后再试。'
-          : err.message || '请求失败'
-      message.error(hint)
+      const msg =
+        e instanceof Error && typeof e.message === 'string' && e.message.trim()
+          ? e.message.trim()
+          : '批量入库失败'
+      showBatchImportFailureMessage(msg)
     } finally {
       setBatchSubmitting(false)
+    }
+  }
+
+  const downloadCsvTemplate = async () => {
+    setCsvTemplateDownloading(true)
+    try {
+      await downloadMetadataImportTemplate('csv')
+      message.success('已开始下载 CSV 模板')
+    } catch (e) {
+      message.error((e as Error).message || '下载模板失败')
+    } finally {
+      setCsvTemplateDownloading(false)
     }
   }
 
@@ -351,53 +529,62 @@ export default function StandardLibraryRegistryPage() {
   const columns: ProColumns<StdBaseRow>[] = [
     {
       title: '标准号',
-      dataIndex: 'bz_id',
+      dataIndex: 'stdCode',
       copyable: true,
       ellipsis: true,
       width: 200,
+      render: (_, row) => listRowStdCode(row) ?? '—',
     },
     {
       title: '名称',
-      dataIndex: 'bz_name',
+      dataIndex: 'bzName',
       ellipsis: true,
+      render: (_, row) => listRowStdName(row) ?? '—',
     },
     {
       title: '类别',
-      key: 'category',
+      dataIndex: 'stdCategory',
       width: 120,
       ellipsis: true,
       search: false,
-      render: (_, row) => <Text ellipsis={{ tooltip: pickCategory(row) }}>{pickCategory(row)}</Text>,
+      render: (_, row) => (
+        <Text ellipsis={{ tooltip: listStdCategoryCell(row) }}>{listStdCategoryCell(row)}</Text>
+      ),
     },
     {
       title: '执行状态',
-      dataIndex: 'ex_state',
+      dataIndex: 'stdStatus',
       width: 110,
       search: false,
-      render: (_, row) => renderExStateTag(row.ex_state),
+      render: (_, row) => renderExStateTag(listRowExState(row)),
     },
     {
       title: '发布日期',
-      dataIndex: 'release_date',
+      dataIndex: 'bzReleaseDate',
       width: 120,
       search: false,
+      render: (_, row) => listBzReleaseDateCell(row) || '—',
     },
     {
       title: '实施日期',
-      dataIndex: 'implement_time',
+      dataIndex: 'implementTime',
       width: 120,
       search: false,
+      render: (_, row) => listImplementDateCell(row) || '—',
     },
     {
       title: '操作',
       valueType: 'option',
       width: 88,
       fixed: 'right',
-      render: (_, record) => (
-        <Button type="link" size="small" disabled={!record.bz_id} onClick={() => openDetail(record.bz_id!)}>
-          详情
-        </Button>
-      ),
+      render: (_, record) => {
+        const code = listRowStdCode(record)
+        return (
+          <Button type="link" size="small" disabled={!code} onClick={() => code && openDetail(code)}>
+            详情
+          </Button>
+        )
+      },
     },
   ]
 
@@ -408,7 +595,6 @@ export default function StandardLibraryRegistryPage() {
           <Title level={2} style={SL_PAGE_TITLE}>
             标准入库与查询
           </Title>
-          <Text style={SL_PAGE_SUBTITLE}>总览库内标准数量与执行状态，支持检索、筛选与元数据入库（布局参考工作台仪表盘）。</Text>
         </div>
 
         <Row gutter={[16, 16]} align="stretch">
@@ -491,10 +677,7 @@ export default function StandardLibraryRegistryPage() {
             }}
           >
             <Space wrap>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => setSingleModalOpen(true)}>
-                单条入库
-              </Button>
-              <Button icon={<CloudUploadOutlined />} onClick={() => setBatchModalOpen(true)}>
+              <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setBatchModalOpen(true)}>
                 批量入库
               </Button>
             </Space>
@@ -535,22 +718,20 @@ export default function StandardLibraryRegistryPage() {
                   actionRef.current?.reload()
                 }}
               />
-              <Button
-                icon={<FilterOutlined />}
-                onClick={() => message.info('已支持按执行状态下拉筛选；更多条件可在后续版本扩展。')}
-              >
-                筛选说明
-              </Button>
-              <Button onClick={() => message.info('导出功能暂未实现')}>导出</Button>
             </Space>
           </div>
 
           <ProTable<StdBaseRow>
             actionRef={actionRef}
-            rowKey={(r, i) => String(r.id ?? r.bz_id ?? i)}
+            rowKey={(r, i) => String(r.id ?? listRowStdCode(r) ?? i)}
             columns={columns}
             search={false}
-            options={{ reload: true, density: true, setting: true }}
+            options={{
+              reload: true,
+              /** ProTable 密度按钮依赖的 rc-* 在 React 18 StrictMode 下会触发 findDOMNode 弃用警告 */
+              density: false,
+              setting: true,
+            }}
             pagination={{
               locale: paginationLocaleZh,
               defaultPageSize: 20,
@@ -584,21 +765,6 @@ export default function StandardLibraryRegistryPage() {
       </Space>
 
       <Modal
-        title="单条入库"
-        open={singleModalOpen}
-        onCancel={() => setSingleModalOpen(false)}
-        footer={[
-          <Button key="close" onClick={() => setSingleModalOpen(false)}>
-            关闭
-          </Button>,
-        ]}
-      >
-        <Text type="secondary">
-          逐条录入标准元数据需后端提供创建接口；当前为占位入口，正式联调后可在此放置表单并对接保存接口。
-        </Text>
-      </Modal>
-
-      <Modal
         title="批量入库"
         open={batchModalOpen}
         onCancel={() => setBatchModalOpen(false)}
@@ -613,9 +779,18 @@ export default function StandardLibraryRegistryPage() {
         ]}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Text type="secondary">
-            支持多文件（Excel、CSV、压缩包等，以后端约定为准）。接口：<Text code>POST /api/standards/metadata-batch-import/</Text>
-          </Text>
+          <Flex wrap="wrap" gap="small" align="center">
+            <Text type="secondary" style={{ marginRight: 4 }}>
+              导入模板：
+            </Text>
+            <Button
+              icon={<DownloadOutlined />}
+              loading={csvTemplateDownloading}
+              onClick={() => void downloadCsvTemplate()}
+            >
+              下载 CSV 模板
+            </Button>
+          </Flex>
           <Upload.Dragger {...uploadProps}>
             <p className="ant-upload-drag-icon">
               <CloudUploadOutlined style={{ fontSize: 40, color: '#1677ff' }} />
@@ -635,14 +810,40 @@ export default function StandardLibraryRegistryPage() {
       >
         {detailLoading ? (
           <span style={{ color: 'rgba(0,0,0,0.45)' }}>加载中…</span>
-        ) : detail ? (
-          <Descriptions column={1} bordered size="small">
-            {Object.entries(detail).map(([k, v]) => (
-              <Descriptions.Item key={k} label={k}>
-                {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-              </Descriptions.Item>
-            ))}
-          </Descriptions>
+        ) : detail && detailBzId ? (
+          <>
+            <Space wrap style={{ marginBottom: 16 }}>
+              <Button
+                type="primary"
+                onClick={() =>
+                  window.open(
+                    standardsDetailTextUrl('preview', detailBzId),
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }
+              >
+                在线预览
+              </Button>
+              <Link
+                href={standardsDetailTextUrl('download', detailBzId)}
+                download
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <DownloadOutlined /> 下载文本
+              </Link>
+            </Space>
+            <Descriptions column={1} bordered size="small">
+              {STD_DETAIL_SCHEMA.map(({ key, label }) => (
+                <Descriptions.Item key={key} label={label}>
+                  <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {formatStdDetailValue(resolveStdDetailField(detail, key))}
+                  </span>
+                </Descriptions.Item>
+              ))}
+            </Descriptions>
+          </>
         ) : null}
       </Drawer>
     </div>

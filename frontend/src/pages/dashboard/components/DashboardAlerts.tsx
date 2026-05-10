@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Card,
   List,
@@ -13,76 +13,67 @@ import {
   Col,
 } from "antd";
 import {
-  ClockCircleOutlined,
-  NotificationOutlined,
   WarningOutlined,
+  NotificationOutlined,
   SearchOutlined,
   SortAscendingOutlined,
   SortDescendingOutlined,
+  HourglassOutlined,
 } from "@ant-design/icons";
-import request from "@/services/request";
+import type { AbolitionHintItem } from "@/types/dashboard";
 
 const { Text } = Typography;
 
-export default function DashboardAlerts() {
-  const [loading, setLoading] = useState(true);
-  const [upcomingData, setUpcomingData] = useState<any[]>([]);
-  const [abolishedData, setAbolishedData] = useState<any[]>([]);
+const getDaysTagColor = (days: number) => {
+  if (days <= 7) return "#cf1322";
+  if (days <= 15) return "#fa8c16";
+  return "#108ee9";
+};
 
+interface Props {
+  loading: boolean;
+  asOf?: string;
+  upcoming: AbolitionHintItem[];
+  recent: AbolitionHintItem[];
+}
+
+export default function DashboardAlerts({
+  loading,
+  asOf,
+  upcoming,
+  recent,
+}: Props) {
   const [searchText, setSearchText] = useState("");
-  const [sortOrder, setSortOrder] = useState("asc");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
-  useEffect(() => {
-    request
-      .get("/standards/dashboard-alerts/")
-      .then((res) => {
-        const data = res.data?.data || (res as any).data;
-        if (data) {
-          setUpcomingData(data.upcoming || []);
-          setAbolishedData(data.abolished || []);
-        }
-      })
-      .catch((err) => {
-        console.error("Dashboard alerts fetch failed:", err);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const processedUpcoming = useMemo(() => {
+    const keyword = searchText.toLowerCase();
+    let filtered = upcoming.filter(
+      (item) =>
+        item.stdCode.toLowerCase().includes(keyword) ||
+        item.stdName.toLowerCase().includes(keyword),
+    );
+    filtered = [...filtered].sort((a, b) =>
+      sortOrder === "asc"
+        ? a.daysFromToday - b.daysFromToday
+        : b.daysFromToday - a.daysFromToday,
+    );
+    return filtered;
+  }, [upcoming, searchText, sortOrder]);
 
-  const getDaysTagColor = (days: number) => {
-    if (days <= 7) return "#cf1322";
-    if (days <= 15) return "#fa8c16";
-    return "#108ee9";
-  };
-
-  const processedUpcomingData = useMemo(() => {
-    let filtered = upcomingData.filter((item) => {
-      const keyword = searchText.toLowerCase();
-      const bzId = (item.bz_id || "").toLowerCase();
-      const bzName = (item.bz_name || "").toLowerCase();
-      return bzId.includes(keyword) || bzName.includes(keyword);
-    });
-
-    return filtered.sort((a, b) => {
-      if (sortOrder === "asc") {
-        return a.days_left - b.days_left;
-      } else {
-        return b.days_left - a.days_left;
-      }
-    });
-  }, [upcomingData, searchText, sortOrder]);
+  const asOfSuffix = asOf ? ` · 基准日 ${asOf}` : "";
 
   return (
     <Row gutter={[16, 16]}>
-      {/* 左侧：实时更新专区 */}
       <Col xs={24} lg={16}>
         <Card
           title={
             <Space>
-              <ClockCircleOutlined
+              <HourglassOutlined
                 style={{ color: "#1890ff", marginRight: 8 }}
               />
               <span style={{ fontSize: 16, fontWeight: 600, color: "#1e293b" }}>
-                实时更新 (30天内即将实施)
+                废止日期临近（未过期）
               </span>
             </Space>
           }
@@ -120,17 +111,20 @@ export default function DashboardAlerts() {
                 }
                 title={
                   sortOrder === "asc"
-                    ? "当前: 紧急优先 (点击切换)"
-                    : "当前: 宽松优先 (点击切换)"
+                    ? "当前：最近废止日优先（点击切换）"
+                    : "当前：较晚废止日优先（点击切换）"
                 }
               />
             </Space>
           }
         >
           <Spin spinning={loading}>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+              废止日在基准日当天及之后的窗口内列出{asOfSuffix}
+            </Typography.Text>
             <List
               itemLayout="horizontal"
-              dataSource={processedUpcomingData}
+              dataSource={processedUpcoming}
               pagination={{
                 pageSize: 3,
                 size: "small",
@@ -148,18 +142,18 @@ export default function DashboardAlerts() {
                   <List.Item.Meta
                     title={
                       <Text strong style={{ fontSize: 15, color: "#334155" }}>
-                        {item.bz_id} {item.bz_name}
+                        {item.stdCode} {item.stdName}
                       </Text>
                     }
                     description={
                       <span style={{ color: "#94a3b8" }}>
-                        实施日期: {item.implement_time}
+                        状态：{item.stdStatus} · 废止日 {item.abolitionDate}
                       </span>
                     }
                   />
                   <div>
                     <Tag
-                      color={getDaysTagColor(item.days_left)}
+                      color={getDaysTagColor(item.daysFromToday)}
                       style={{
                         fontSize: "14px",
                         padding: "4px 10px",
@@ -167,7 +161,7 @@ export default function DashboardAlerts() {
                         marginRight: 0,
                       }}
                     >
-                      仅剩 {item.days_left} 天
+                      距废止还有 {item.daysFromToday} 天
                     </Tag>
                   </div>
                 </List.Item>
@@ -175,7 +169,7 @@ export default function DashboardAlerts() {
               locale={{
                 emptyText: (
                   <div style={{ padding: "40px", color: "#94a3b8" }}>
-                    近期暂无即将实施的标准
+                    当前窗口内暂无即将到达废止日的标准
                   </div>
                 ),
               }}
@@ -184,14 +178,13 @@ export default function DashboardAlerts() {
         </Card>
       </Col>
 
-      {/* 右侧：提醒专区 */}
       <Col xs={24} lg={8}>
         <Card
           title={
             <Space>
               <WarningOutlined style={{ color: "#faad14", marginRight: 8 }} />
               <span style={{ fontSize: 16, fontWeight: 600, color: "#1e293b" }}>
-                近期废止警示
+                近期已废止
               </span>
             </Space>
           }
@@ -207,8 +200,11 @@ export default function DashboardAlerts() {
           }}
         >
           <Spin spinning={loading}>
+            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+              abolition_date 早于基准日且在 recent 天内{asOfSuffix}
+            </Typography.Text>
             <List
-              dataSource={abolishedData}
+              dataSource={recent}
               pagination={{
                 pageSize: 2,
                 size: "small",
@@ -221,8 +217,13 @@ export default function DashboardAlerts() {
                   style={{ borderBottom: "none", padding: "0 0 12px 0" }}
                 >
                   <Alert
-                    message="标准废止提醒"
-                    description={item.message}
+                    message={`${item.stdCode} · ${item.stdName}`}
+                    description={
+                      <span>
+                        废止日 {item.abolitionDate}（已过去{" "}
+                        {Math.abs(item.daysFromToday)} 天）
+                      </span>
+                    }
                     type="error"
                     showIcon
                     icon={<NotificationOutlined />}
@@ -249,7 +250,7 @@ export default function DashboardAlerts() {
                       style={{ fontSize: 16, color: "#3b82f6" }}
                     />
                     <span style={{ fontSize: 14, fontWeight: 500 }}>
-                      近期暂无标准废止
+                      近期窗口内暂无已废止记录
                     </span>
                   </div>
                 ),

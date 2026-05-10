@@ -5,7 +5,10 @@ import type {
 } from '@/types/compliance'
 import axios from 'axios'
 
-const STANDARDS_API = '/standards/'
+/** 标准列表/详情等与后端 `/api/v1/standards/` 对齐 */
+const STANDARDS_V1_API = 'v1/standards/'
+/** 尚未迁移到 v1 的接口仍挂在 `/api/standards/` 下 */
+const STANDARDS_LEGACY_PREFIX = 'standards/'
 const INDEXES_TABLE_API = '/indexes_table/'
 const BATCH_REFERENCES_API = '/standards/batch-references/'
 const BATCH_INDEXES_API = '/standards/batch-indexes/'
@@ -14,7 +17,7 @@ const BASIC_SEARCH_API = '/standards/basic-search/'
 const WARNING_TRACE_API = '/standards/warning-trace/'
 const DOWNLOAD_DOC_API = '/standards/download-doc/'
 const DASHBOARD_ALERTS_API = '/standards/dashboard-alerts/'
-const STANDARDS_STATISTICS_API = '/standards/statistics/'
+const STANDARDS_STATISTICS_API = 'v1/standards/statistics/'
 const AUDIT_PENDING_INDEXES_API = '/audit/pending_indexes/'
 const AUDIT_SUBMIT_API = '/audit/submit/'
 const AUDIT_BULK_SUBMIT_API = '/audit/bulk_submit/'
@@ -183,19 +186,19 @@ const toComplianceTask = (item: Record<string, unknown>, index: number): Complia
 
 export const getComplianceTasks = async () => {
   try {
-    const response = await request.get<ListResponse<Record<string, unknown>>>(STANDARDS_API)
+    const response = await request.get<ListResponse<Record<string, unknown>>>(STANDARDS_V1_API)
     const rows = normalizeList(response.data).map(toComplianceTask)
     return {
       ...response,
       data: rows,
     }
   } catch (error) {
-    with404Hint(error, `${request.defaults.baseURL}${STANDARDS_API}`)
+    with404Hint(error, `${request.defaults.baseURL}${STANDARDS_V1_API}`)
   }
 }
 
 export const getComplianceTask = async (id: string) =>
-  request.get<ComplianceTask>(`${STANDARDS_API}${id}/`)
+  request.get<ComplianceTask>(`${STANDARDS_V1_API}${id}/`)
 
 export const createComplianceTask = async (_payload: CreateComplianceTaskRequest) => {
   throw new Error('后端暂未提供合规任务创建接口，请联系后端补充 /compliance/tasks/ 或等效接口。')
@@ -360,7 +363,7 @@ export const getNationalIndexes = async (params?: Record<string, unknown>) => {
 }
 
 export const checkLatestStandard = async (bzId: string): Promise<StandardLatestCheckResult> => {
-  const response = await request.get<Record<string, unknown>>(`${STANDARDS_API}check-latest/`, {
+  const response = await request.get<Record<string, unknown>>(`${STANDARDS_LEGACY_PREFIX}check-latest/`, {
     params: { bz_id: bzId },
   })
   const data = response.data
