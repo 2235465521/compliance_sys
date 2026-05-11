@@ -13,6 +13,7 @@ function formatDuplicateRequestError(err: unknown): string {
   if (isAxiosError(err)) {
     const data = err.response?.data as Record<string, unknown> | undefined
     const fromBody =
+      (typeof data?.error === 'string' && data.error) ||
       (typeof data?.detail === 'string' && data.detail) ||
       (typeof data?.message === 'string' && data.message) ||
       (typeof data?.msg === 'string' && data.msg) ||

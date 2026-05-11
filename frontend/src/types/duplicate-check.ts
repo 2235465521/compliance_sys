@@ -1,8 +1,6 @@
-/** 查重服务：请求体（与后端对齐时可扩展字段） */
+/** 查重服务：请求体。用户可在单一输入框内填写拟建标准名、关键词、大纲或立项说明，一并提交给后端。 */
 export type DuplicateCheckPayload = {
-  standardName: string
-  keywords?: string[]
-  outline?: string
+  queryText: string
 }
 
 /** 单条重合/相似结果 */
