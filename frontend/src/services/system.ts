@@ -1,7 +1,7 @@
 /**
  * 系统安全与审计 — 演示用 Mock
  *
- * MOCK: 《后端接口说明文档》未提供面向 SPA 的用户/角色/系统审计日志 REST；本文件不调用 `/api/audit/submit` 等
+ * MOCK: 面向 SPA 的用户/角色/系统审计日志 REST 当前由前端模拟；本文件不调用 `/api/audit/submit` 等
  * **业务审核台**接口（与 7.2 全流程审计日志不同）。联调时替换为真实 request。
  */
 import { useSystemStore } from '@/stores/system'

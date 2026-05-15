@@ -49,7 +49,8 @@ type UseDifyNotificationsOptions = {
  *   浏览器会报 “closed before the connection is established”，属正常现象，第二次挂载会再连。
  * - 若路径与后端 routing 不一致，会反复失败；请设置 `VITE_WS_DIFY_URL` 或 `VITE_WS_DIFY_ENABLED=false` 先关闭实时推送（页面仍可用轮询）。
  */
-export function useDifyNotifications({ enabled = true, onEvent }: UseDifyNotificationsOptions) {
+/** 新合规模块以轮询 `parse_status` 为主；WebSocket 默认关闭，避免无效重连。 */
+export function useDifyNotifications({ enabled = false, onEvent }: UseDifyNotificationsOptions) {
   const onEventRef = useRef(onEvent)
   onEventRef.current = onEvent
 

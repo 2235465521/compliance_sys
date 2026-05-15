@@ -15,7 +15,7 @@ export function usePollingJob<T>(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [isRunning, setIsRunning] = useState(true);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const jobRef = useRef(job);
 
   // 保存最新的job函数
@@ -97,7 +97,7 @@ export function usePollingJob<T>(
 }
 
 // 用于轮询任务状态的hook
-export function useTaskStatusPolling(taskId: string, fetchStatus: () => Promise<any>) {
+export function useTaskStatusPolling(_taskId: string, fetchStatus: () => Promise<any>) {
   const { data: taskStatus, loading, error, isRunning, startPolling, stopPolling } = usePollingJob(
     fetchStatus,
     { interval: 10000, immediate: true }
@@ -121,7 +121,7 @@ export function useTaskStatusPolling(taskId: string, fetchStatus: () => Promise<
 }
 
 // 用于轮询文件解析进度的hook
-export function useFileAnalysisPolling(fileId: string, fetchProgress: () => Promise<any>) {
+export function useFileAnalysisPolling(_fileId: string, fetchProgress: () => Promise<any>) {
   const { data: analysisProgress, loading, error, isRunning, startPolling, stopPolling } = usePollingJob(
     fetchProgress,
     { interval: 5000, immediate: true }

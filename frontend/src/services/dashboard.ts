@@ -1,41 +1,10 @@
 import request from './request'
-import type { StatisticsData, WarningListResponse, BasicSearchResult, PaginatedResponse, StandardItem } from '@/types/dashboard'
+import type { StatisticsData, BasicSearchResult, PaginatedResponse, StandardItem } from '@/types/dashboard'
 
 // ─── Mock 数据（后端未就绪时使用）─────────────────────────────────────────────
 const MOCK_STATISTICS: StatisticsData = {
   types: { GB: 1500, QB: 300, HB: 50, TB: 20, DB: 80 },
   states: { 现行: 1200, 废止: 600, 即将实施: 50 },
-}
-
-const MOCK_WARNINGS: WarningListResponse = {
-  success: true,
-  unread_count: 3,
-  data: [
-    {
-      id: 1,
-      old_bz_id: 'GB/T 1.1-2009',
-      new_bz_id: 'GB/T 1.1-2020',
-      quote_bz: 'Q/XYZ 001-2023',
-      is_read: false,
-      create_time: '2024-03-20T10:00:00Z',
-    },
-    {
-      id: 2,
-      old_bz_id: 'GB/T 20000.1-2014',
-      new_bz_id: 'GB/T 20000.1-2023',
-      quote_bz: 'Q/ABC 002-2022',
-      is_read: false,
-      create_time: '2024-03-19T08:30:00Z',
-    },
-    {
-      id: 3,
-      old_bz_id: 'GB 9706.1-2007',
-      new_bz_id: 'GB 9706.1-2020',
-      quote_bz: 'Q/DEF 003-2021',
-      is_read: true,
-      create_time: '2024-03-18T14:00:00Z',
-    },
-  ],
 }
 
 // ─── API 封装 ─────────────────────────────────────────────────────────────────

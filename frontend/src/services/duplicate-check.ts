@@ -7,7 +7,7 @@ import request from '@/services/request'
 import { downloadBlob } from '@/utils/download'
 
 /**
- * 与《backend_api_docs_v2.md》§4「查重与语义分析」对齐：
+ * 与后端查重/语义分析接口约定对齐（路径与字段以联调为准）：
  * - 一审（字面名称）：POST /api/duplicate/name-check/
  * - 二审（AI 语义）：POST /api/duplicate/semantic-check/
  *

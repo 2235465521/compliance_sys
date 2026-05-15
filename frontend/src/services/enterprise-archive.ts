@@ -1,7 +1,7 @@
 /**
  * 企业档案服务 — 演示用 Mock
  *
- * MOCK: 《后端接口说明文档》未提供企业主档 CRUD/一企一库列表等 REST，本文件全部走内存 zustand。
+ * MOCK: 企业主档 CRUD/一企一库列表等 REST 当前由前端内存模拟；对接后端后替换为真实请求。
  * 联调时替换为真实 request 调用，路径以后端约定为准。
  */
 import { useEnterpriseArchiveStore } from '@/stores/enterprise-archive'
