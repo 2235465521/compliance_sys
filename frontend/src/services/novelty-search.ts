@@ -31,7 +31,7 @@ export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<Stan
   const q = bzId.trim()
   if (!q) return []
   try {
-    const res = await request.get<PaginatedResponse<StandardItem> | Record<string, unknown>>('/standards/', {
+    const res = await request.get<PaginatedResponse<StandardItem> | Record<string, unknown>>('v1/standards/', {
       params: { bz_id: q, page_size: 100 },
     })
     const data = res.data as Record<string, unknown>

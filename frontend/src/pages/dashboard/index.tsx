@@ -1,7 +1,6 @@
 import { Col, Row, Spin, Typography, Button, Space, Divider } from "antd";
 import {
   ReloadOutlined,
-  FileExcelOutlined,
   DatabaseOutlined,
   AlertOutlined,
   ClockCircleOutlined,
@@ -15,7 +14,6 @@ import KpiCard from "./components/KpiCard";
 import StatsPieChart from "./components/StatsPieChart";
 import StandardSearch from "./components/StandardSearch";
 import DashboardAlerts from "./components/DashboardAlerts";
-import QuickActions from "./components/QuickActions";
 import { useDashboardData } from "./hooks/useDashboardData";
 
 dayjs.locale("zh-cn");
@@ -81,33 +79,21 @@ export default function DashboardPage() {
           <Space style={{ marginTop: 4 }} size={6}>
             <CalendarOutlined style={{ color: "#8c8c8c", fontSize: 13 }} />
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              {dayjs().format("YYYY年MM月DD日")} · 数据实时概览
+              {dayjs().format("YYYY年MM月DD日")} · 进入页面或点击刷新加载最新统计
             </Typography.Text>
           </Space>
         </div>
-        <Space>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={reload}
-            loading={loading}
-            style={{ borderRadius: 8 }}
-          >
-            刷新数据
-          </Button>
-          <Button
-            type="primary"
-            icon={<FileExcelOutlined />}
-            style={{ borderRadius: 8 }}
-          >
-            导出报告
-          </Button>
-        </Space>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={reload}
+          loading={loading}
+          style={{ borderRadius: 8 }}
+        >
+          刷新数据
+        </Button>
       </div>
 
       <Spin spinning={loading} size="large" tip="数据加载中...">
-        {/* ── 顶部胶囊导航栏 ────────────────────────────────────── */}
-        <QuickActions />
-
         {/* ── KPI 卡片行（flex 5 等宽）──────────────────────── */}
         <div
           style={{
@@ -140,14 +126,19 @@ export default function DashboardPage() {
 
           {/* ── 底部实时更新与提醒专区 ──────────────────────────── */}
           <Col span={24}>
-            <DashboardAlerts />
+            <DashboardAlerts
+              loading={loading}
+              asOf={stats?.abolitionHintsAsOf}
+              upcoming={stats?.abolitionUpcoming ?? []}
+              recent={stats?.abolitionRecent ?? []}
+            />
           </Col>
         </Row>
 
         <Divider style={{ margin: "16px 0 8px" }} />
         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          数据来源：标准化信息服务平台后端 · 每次进入页面自动刷新 ·
-          预警标记已读后实时同步
+          数据来源：仪表盘 summary / abolition-hints / quick-lookup ·
+          每次进入页面或点击「刷新数据」重新拉取
         </Typography.Text>
       </Spin>
     </div>

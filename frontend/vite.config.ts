@@ -14,6 +14,7 @@ export default defineConfig({
     },
   },
   server: {
+    // 开发环境：浏览器访问 /api → 转发到 Django（与 axios baseURL `/api` 一致）
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

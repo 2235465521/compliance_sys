@@ -10,10 +10,32 @@ export interface StandardStateStat {
   value: number
 }
 
-/** 大屏统计接口原始响应 data 字段 */
+/** 大屏统计接口原始响应 data 字段（与 GET v1/standards/statistics/、v1/dashboard/summary 一致） */
 export interface StatisticsData {
+  /** 主表总行数 */
+  total?: number
+  /** 按 std_category 分布 */
   types: Record<string, number>
+  /** 现行 / 废止 / 即将实施 / 其它 等语义分组计数 */
   states: Record<string, number>
+  statusGroups?: unknown
+  byStatus?: Record<string, number>
+  byPublishYear?: Record<string, number>
+}
+
+/** 废止提示单条（GET v1/dashboard/abolition-hints） */
+export interface AbolitionHintItem {
+  stdCode: string
+  stdName: string
+  stdStatus: string
+  abolitionDate: string
+  daysFromToday: number
+}
+
+export interface AbolitionHintsPayload {
+  asOf: string
+  upcoming: AbolitionHintItem[]
+  recent: AbolitionHintItem[]
 }
 
 /** 预警条目 */
@@ -43,8 +65,12 @@ export interface DashboardStats {
   pendingCount: number
   /** 废止数 */
   revokedCount: number
-  /** 未读预警数 */
+  /** 近期废止条数（abolition-hints recent 窗口内） */
   unreadWarnings: number
+  /** 废止提示基准日 */
+  abolitionHintsAsOf?: string
+  abolitionUpcoming?: AbolitionHintItem[]
+  abolitionRecent?: AbolitionHintItem[]
   /** 类型分布（饼图用） */
   typeData: StandardTypeStat[]
   /** 状态分布（环形图用） */
