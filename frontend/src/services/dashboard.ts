@@ -1,12 +1,5 @@
-import request from "./request";
-import type {
-  StatisticsData,
-  BasicSearchResult,
-  PaginatedResponse,
-  StandardItem,
-  AbolitionHintsPayload,
-  AbolitionHintItem,
-} from "@/types/dashboard";
+import request from './request'
+import type { StatisticsData, BasicSearchResult, PaginatedResponse, StandardItem } from '@/types/dashboard'
 
 /** 统计数据：支持 { code, data } 或裸 data（与 standards 统计一致） */
 function parseStatisticsResponse(res: unknown): StatisticsData {
@@ -24,19 +17,19 @@ function parseStatisticsResponse(res: unknown): StatisticsData {
   throw new Error(body.msg || "统计响应格式无效");
 }
 
-/** 仅需 { code, data } 的接口 */
-function parseEnvelopeData<T>(res: unknown): T {
-  const body = res as { code?: number; data?: T; msg?: string };
-  if (typeof body.code === "number" && body.code === 200 && body.data != null) {
-    return body.data;
-  }
-  throw new Error(body.msg || "响应格式无效");
-}
+// ─── API 封装 ─────────────────────────────────────────────────────────────────
 
-function field(obj: Record<string, unknown>, ...keys: string[]): string {
-  for (const k of keys) {
-    const v = obj[k];
-    if (v != null && String(v).trim() !== "") return String(v);
+/** GET /api/standards/statistics/ — 获取大屏统计数据 */
+export async function fetchStatistics(): Promise<StatisticsData> {
+  try {
+    const res = await request.get<{ code: number; msg: string; data: StatisticsData }>(
+      '/standards/statistics/',
+    )
+    return res.data.data
+  } catch {
+    // TODO: 替换为真实接口（后端就绪后移除 Mock）
+    console.warn('[dashboard] 统计接口不可用，使用 Mock 数据')
+    return MOCK_STATISTICS
   }
   return "";
 }

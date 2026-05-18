@@ -4,7 +4,7 @@ import {
   FileTextOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
-import { App, Alert, Button, Card, Col, Form, Input, Row, Space, Table, Tabs, Typography, Upload } from 'antd'
+import { App, Alert, Button, Card, Form, Input, Space, Table, Tabs, Typography, Upload } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload/interface'
 import type { RcFile } from 'antd/es/upload'

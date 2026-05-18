@@ -24,8 +24,8 @@ function delay(ms = MOCK_LATENCY_MS) {
 }
 
 /**
- * 按企标号在标准库（StdBase）中检索：GET /api/v1/standards/?bz_id=…
- * 与《后端接口文档》2.1 列表/搜索标准一致；失败时返回空数组（由界面提示）。
+ * 按企标号在标准库（StdBase）中检索：GET /api/standards/?bz_id=…
+ * 调用标准库列表接口 `GET /api/standards/?bz_id=…`；失败时返回空数组（由界面提示）。
  */
 export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<StandardItem[]> {
   const q = bzId.trim()
@@ -39,8 +39,9 @@ export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<Stan
       const inner = data.data as { results?: StandardItem[] }
       return Array.isArray(inner.results) ? inner.results : []
     }
-    if (Array.isArray((data as PaginatedResponse<StandardItem>)?.results)) {
-      return (data as PaginatedResponse<StandardItem>).results
+    const paginated = data as unknown as PaginatedResponse<StandardItem>
+    if (Array.isArray(paginated?.results)) {
+      return paginated.results
     }
     return []
   } catch {

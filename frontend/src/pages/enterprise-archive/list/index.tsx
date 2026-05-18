@@ -85,7 +85,7 @@ export default function EnterpriseListPage() {
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
         <Typography.Text type="warning">演示数据</Typography.Text>
-        ：主档与关联表为前端 Mock；企业实体 REST 未在《后端接口说明文档》中列出。
+        ：主档与关联表为前端 Mock；企业实体 REST 以后端新接口为准。
       </Typography.Paragraph>
 
       <Card bordered={false} styles={{ body: { paddingBottom: 8 } }}>

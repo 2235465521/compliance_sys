@@ -24,6 +24,10 @@ import SystemLayout from '@/pages/system/Layout'
 import SystemRolesPage from '@/pages/system/roles'
 import SystemUsersPage from '@/pages/system/users'
 import TemplateArchivePage from '@/pages/template-archive'
+import BatchNormativeRefLayout from '@/pages/batch-normative-ref/Layout'
+import BatchJobListPage from '@/pages/batch-normative-ref/BatchJobListPage'
+import BatchJobDetailPage from '@/pages/batch-normative-ref/BatchJobDetailPage'
+import BatchItemReferencePage from '@/pages/batch-normative-ref/BatchItemReferencePage'
 
 export const router = createBrowserRouter([
   {
@@ -55,6 +59,15 @@ export const router = createBrowserRouter([
       },
       { path: 'duplicate-check', element: <DuplicateCheckPage /> },
       { path: 'compliance', element: <CompliancePage /> },
+      {
+        path: 'batch-normative-reference',
+        element: <BatchNormativeRefLayout />,
+        children: [
+          { index: true, element: <BatchJobListPage /> },
+          { path: ':jobId/items/:itemId', element: <BatchItemReferencePage /> },
+          { path: ':jobId', element: <BatchJobDetailPage /> },
+        ],
+      },
       { path: 'alert', element: <AlertPage /> },
       {
         path: 'enterprise-archive',

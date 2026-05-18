@@ -47,7 +47,7 @@ export default function SystemLayout() {
           </Space>
           <Typography.Paragraph type="secondary" style={{ margin: 0 }}>
             <Typography.Text type="warning">演示数据</Typography.Text>
-            ：用户、角色与审计为前端 Mock；与《后端接口说明文档》中 Dify/指标
+            ：用户、角色与审计为前端 Mock；与合规模块中 Dify/指标
             <Typography.Text code>/api/audit/*</Typography.Text>
             业务审核台无关。
           </Typography.Paragraph>
