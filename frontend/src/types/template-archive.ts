@@ -72,3 +72,19 @@ export type DownloadListQuery = {
   timeFrom?: string
   timeTo?: string
 }
+
+/** 筛选：任务侧 / 文件侧（成对行可同时满足两者） */
+export type ArchiveUnifiedKind = 'record' | 'download'
+
+/** 合并列表中的统一状态（便于筛选与展示） */
+export type ArchiveUnifiedDisplayStatus = 'ok' | 'in_progress' | 'failed'
+
+/**
+ * 存档合并行：尽量将「任务记录」与对应「下载文件」配成同一行（按 reportId / 文件名等启发式）。
+ * 至少包含 record 或 download 之一。
+ */
+export type ArchiveUnifiedRow = {
+  key: string
+  record?: ArchiveHistoryRecord
+  download?: DownloadCenterItem
+}

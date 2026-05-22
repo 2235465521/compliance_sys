@@ -13,18 +13,29 @@ import {
   Steps,
   Table,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { UploadFile } from 'antd/es/upload/interface'
-import { SaveOutlined, UploadOutlined } from '@ant-design/icons'
+import { DownloadOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons'
 import {
-  checkLatestStandard,
+  backendCurrentStepToMaxWizardIndex,
+  checkLatestStandardsBatch,
+  confirmEvaluationAuditStep1,
+  confirmEvaluationAuditStep2,
+  confirmEvaluationAuditStep3,
+  confirmEvaluationAuditStep4,
   exportComplianceReport,
+  fileComplianceOutcomeLabel,
+  getComplianceEvaluationTaskId,
   getNationalIndexes,
   getPendingIndexes,
+  isRowCitationAutoLatest,
+  isRowCitationAutoOutdated,
+  pollComplianceEvaluationUntilParseSettled,
   postInsertIndexes,
   saveReferenceMapping,
   submitAuditBulkDecision,
@@ -34,6 +45,14 @@ import {
   type StandardLatestCheckResult,
   uploadEnterpriseStandard,
 } from '@/services/compliance'
+import { getEvaluation, getStep4Indicators } from '@/services/compliance-api'
+import type { MissingGbFileItem } from '@/types/compliance-api'
+import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
+import {
+  downloadComplianceConclusionTextReport,
+  safeFilenameSegment,
+} from '@/pages/compliance/utils/stepReportExport'
+import { ReferenceLatestResolvedTable } from '@/pages/compliance/components/ReferenceLatestResolvedTable'
 
 const { Text } = Typography
 
@@ -97,68 +116,6 @@ const cardStyle: React.CSSProperties = {
   border: '1px solid #e8ecf1',
   boxShadow: '0 4px 18px rgba(15, 23, 42, 0.06)',
 }
-
-const MOCK_ENTERPRISE_BZ_ID = 'Q/WHSJ-001-2023'
-const MOCK_ENTERPRISE_NAME = '示例企业（模拟）'
-
-const createMockReferenceRows = (): PendingIndexItem[] => [
-  {
-    id: 'mock-ref-1',
-    standardName: 'GB/T601-2016',
-    indicatorName: '化学试剂标准滴定溶液的制备',
-    indicatorValue: '化学试剂标准滴定溶液的制备',
-    statusText: '待审核',
-  },
-  {
-    id: 'mock-ref-2',
-    standardName: 'GB/T602-2016',
-    indicatorName: '化学试剂杂质测定用标准溶液的制备',
-    indicatorValue: '化学试剂杂质测定用标准溶液的制备',
-    statusText: '待审核',
-  },
-  {
-    id: 'mock-ref-3',
-    standardName: 'GB/T603-2002',
-    indicatorName: '化学试剂试验方法中所用制剂及制品的制备',
-    indicatorValue: '化学试剂试验方法中所用制剂及制品的制备',
-    statusText: '待审核',
-  },
-]
-
-const createMockEnterpriseRows = (): PendingIndexItem[] => [
-  {
-    id: 'mock-ent-1',
-    standardName: MOCK_ENTERPRISE_BZ_ID,
-    indicatorName: '技术要求',
-    indicatorValue: '外观：无色透明液体；气味：愉快的薄荷香气',
-    statusText: '待审核',
-  },
-  {
-    id: 'mock-ent-2',
-    standardName: MOCK_ENTERPRISE_BZ_ID,
-    indicatorName: '内控标准',
-    indicatorValue: '比旋度：-50°至-49°；蒸发后残留物含量：≤0.05%',
-    statusText: '待审核',
-  },
-  {
-    id: 'mock-ent-3',
-    standardName: MOCK_ENTERPRISE_BZ_ID,
-    indicatorName: '保质期',
-    indicatorValue: '原包装保质期：36个月',
-    statusText: '待审核',
-  },
-]
-
-const MOCK_OLD_REFERENCE_INDEX_ROWS: NationalIndexItem[] = [
-  { id: 'mock-old-1', standardId: 'GB/T601-2016', indexName: '技术要求', indexValue: '色度：无色透明' },
-  { id: 'mock-old-2', standardId: 'GB/T602-2016', indexName: '内控标准', indexValue: '蒸发残留物：≤0.1%' },
-]
-
-const MOCK_LATEST_REFERENCE_INDEX_ROWS: NationalIndexItem[] = [
-  { id: 'mock-latest-1', standardId: 'GB/T601-2020', indexName: '技术要求', indexValue: '色度：无色透明，澄清' },
-  { id: 'mock-latest-2', standardId: 'GB/T602-2020', indexName: '内控标准', indexValue: '蒸发残留物：≤0.05%' },
-  { id: 'mock-latest-3', standardId: 'GB/T603-2002', indexName: '包装', indexValue: '密封、防潮、防污染' },
-]
 
 const extractPendingRowsFromUploadPayload = (input: unknown): PendingIndexItem[] => {
   const rows: PendingIndexItem[] = []
@@ -509,7 +466,6 @@ const extractDescriptiveInfoFromPayload = (input: unknown) => {
 const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, ComplianceWizardPanelProps>(
   function ComplianceWizardPanel({ onProgressSnapshot, afterUploadSuccess }, ref) {
     const rootRef = React.useRef<HTMLDivElement | null>(null)
-    const useMockData = String(import.meta.env.VITE_COMPLIANCE_USE_MOCK ?? '').toLowerCase() === 'true'
     const [messageApi, contextHolder] = message.useMessage()
     const [current, setCurrent] = useState(0)
     const [uploading, setUploading] = useState(false)
@@ -536,9 +492,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const [latestReferenceIndexRows, setLatestReferenceIndexRows] = useState<NationalIndexItem[]>([])
     const [missingOldReferenceFiles, setMissingOldReferenceFiles] = useState<string[]>([])
     const [missingLatestReferenceFiles, setMissingLatestReferenceFiles] = useState<string[]>([])
+    /** `GET .../step/4/indicators` 返回的缺失国标（与「构建对比」并行，用于进入本步后立即展示） */
+    const [step4BackendMissingGb, setStep4BackendMissingGb] = useState<MissingGbFileItem[]>([])
     const [repairUploadFiles, setRepairUploadFiles] = useState<UploadFile[]>([])
     const [repairUploading, setRepairUploading] = useState(false)
     const [validityLoading, setValidityLoading] = useState(false)
+    const [wizardNextLoading, setWizardNextLoading] = useState(false)
+    const [backendMaxWizardIndex, setBackendMaxWizardIndex] = useState(0)
     const [latestStandardRows, setLatestStandardRows] = useState<StandardLatestCheckResult[]>([])
     const [validityEditingId, setValidityEditingId] = useState<string | null>(null)
     const [validityDraft, setValidityDraft] = useState<StandardLatestCheckResult | null>(null)
@@ -572,6 +532,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const uploadBaselineIndexIdsRef = React.useRef<Set<string>>(new Set())
     const hasWarnedUnknownBzIdRef = React.useRef(false)
     const lastAutoDescriptiveRef = React.useRef('')
+    const bootstrapRequestIdRef = React.useRef(0)
+    const runWizardBootstrapSyncRef = React.useRef<() => Promise<void>>(async () => {})
 
     useImperativeHandle(ref, () => ({
       scrollIntoView: () => {
@@ -592,6 +554,31 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${pad(value.getHours())}:${pad(
         value.getMinutes(),
       )}`
+    }
+
+    /** 新后端：在 `current_step===2` 时将当前引用表+指标表写入 `POST .../step/2/confirm`；已越过审核 2 时视为已同步 */
+    const trySyncEvaluationStep2 = async (refs: PendingIndexItem[], inds: PendingIndexItem[]) => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return false
+      try {
+        const ev = await getEvaluation(tid)
+        if (ev.current_step < 2) return false
+        if (ev.current_step > 2) return true
+        await confirmEvaluationAuditStep2(tid, {
+          references: refs.map((r) => ({
+            referenced_std_code: r.standardName?.trim() || null,
+            latest_std_code: null,
+          })),
+          indicator_set: inds.map((r) => ({
+            name: r.indicatorName,
+            value: r.indicatorValue,
+            raw: r,
+          })),
+        })
+        return true
+      } catch {
+        return false
+      }
     }
 
     const buildDescriptiveConclusion = (state: DescriptiveReviewState) => {
@@ -628,7 +615,156 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       }
     }
 
+    /** 刷新后保留用户已点的「审核通过/驳回」，避免被接口默认「解析提取（待审核）」覆盖 */
+    const mergeAuditStatusPreserve = (
+      prev: PendingIndexItem[],
+      next: PendingIndexItem[],
+      mode: 'reference' | 'enterprise',
+    ): PendingIndexItem[] => {
+      // 轮询/会话过滤可能得到空数组，不能用空结果覆盖已有数据
+      if (next.length === 0) {
+        return prev.length > 0 ? prev : next
+      }
+      if (prev.length === 0) return next
+      const keyOf = (r: PendingIndexItem) =>
+        mode === 'reference'
+          ? r.standardName.trim()
+          : `${r.standardName.trim()}\t${r.indicatorName.trim()}\t${r.indicatorValue.trim()}`
+      const prevByKey = new Map<string, PendingIndexItem>()
+      for (const p of prev) {
+        prevByKey.set(keyOf(p), p)
+      }
+      return next.map((row) => {
+        const old = prevByKey.get(keyOf(row))
+        if (!old) return row
+        if (old.statusText.includes('审核通过') || old.statusText.includes('审核驳回')) {
+          return { ...row, statusText: old.statusText }
+        }
+        return row
+      })
+    }
+
     useEffect(() => () => clearPendingPollTimer(), [])
+
+    /** 从后端刷新「可进入的最大向导步」，与 Steps 禁用态、刷新后落点一致 */
+    const refreshBackendStepPolicy = async () => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        setBackendMaxWizardIndex(0)
+        return
+      }
+      try {
+        const ev = await getEvaluation(tid)
+        setBackendMaxWizardIndex(backendCurrentStepToMaxWizardIndex(ev.current_step))
+      } catch {
+        setBackendMaxWizardIndex(0)
+      }
+    }
+
+    /**
+     * 页面刷新 / 首次进入 / `task_id` 晚于组件挂载写入 localStorage：与 `GET evaluations/{id}` 的
+     * `current_step` 对齐向导位置与表格数据，避免「停在第 1 步却可点后续步骤、数据仍是旧会话」。
+     */
+    const runWizardBootstrapSync = async () => {
+      const reqId = ++bootstrapRequestIdRef.current
+      uploadSessionPendingIdsRef.current = new Set()
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        if (reqId !== bootstrapRequestIdRef.current) return
+        setBackendMaxWizardIndex(0)
+        setCurrent(0)
+        return
+      }
+      try {
+        const ev = await getEvaluation(tid)
+        if (reqId !== bootstrapRequestIdRef.current) return
+        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
+        setBackendMaxWizardIndex(maxIdx)
+        setCurrent(maxIdx)
+
+        const qb = ev.qb_code?.trim() ?? ''
+        if (qb) {
+          setLatestUploadedBzId(qb)
+          setLatestUploadedBzIds([qb])
+          setReportBzId(qb)
+          setDescriptiveReview((prev) => ({ ...prev, bzId: prev.bzId.trim() ? prev.bzId : qb }))
+        }
+
+        setComparePreview([])
+        setOldReferenceIndexRows([])
+        setLatestReferenceIndexRows([])
+        setMissingOldReferenceFiles([])
+        setMissingLatestReferenceFiles([])
+        setSavedMappingIds(new Set())
+        setLatestStandardRows([])
+        setValidityEditingId(null)
+        setValidityDraft(null)
+
+        if (ev.current_step >= 4) {
+          setValidityReviewDecision('complete')
+        } else {
+          setValidityReviewDecision('pending')
+        }
+        if (ev.current_step >= 5) {
+          setComparisonAuditPassed(true)
+        } else {
+          setComparisonAuditPassed(false)
+        }
+
+        if (maxIdx >= 2) {
+          setLoadingPending(true)
+          try {
+            const response = await getPendingIndexes()
+            if (reqId !== bootstrapRequestIdRef.current) return
+            setPendingRows(response.data)
+            if ('referenceExtracts' in response) {
+              setReferenceRows(response.referenceExtracts ?? [])
+            } else {
+              setReferenceRows([])
+            }
+            const refs = 'referenceExtracts' in response ? (response.referenceExtracts ?? []) : []
+            const uniq = Array.from(
+              new Set(refs.map((r) => r.standardName.trim()).filter((name) => name.length > 0 && name !== '-')),
+            )
+            if (ev.current_step >= 4 && uniq.length > 0) {
+              try {
+                const { results } = await checkLatestStandardsBatch(uniq)
+                if (reqId !== bootstrapRequestIdRef.current) return
+                setLatestStandardRows(results)
+              } catch {
+                if (reqId !== bootstrapRequestIdRef.current) return
+                setLatestStandardRows([])
+              }
+            }
+          } finally {
+            if (reqId === bootstrapRequestIdRef.current) setLoadingPending(false)
+          }
+        } else {
+          setPendingRows([])
+          setReferenceRows([])
+        }
+      } catch {
+        if (reqId !== bootstrapRequestIdRef.current) return
+        setBackendMaxWizardIndex(0)
+        setCurrent(0)
+        messageApi.warning('无法与后端同步任务进度，已回到第 1 步。请确认评价任务仍有效。')
+      }
+    }
+
+    runWizardBootstrapSyncRef.current = runWizardBootstrapSync
+
+    useEffect(() => {
+      void runWizardBootstrapSyncRef.current()
+      const onTaskIdChanged = () => {
+        void runWizardBootstrapSyncRef.current()
+      }
+      window.addEventListener('compliance-evaluation-task-id-changed', onTaskIdChanged)
+      return () => {
+        bootstrapRequestIdRef.current += 1
+        window.removeEventListener('compliance-evaluation-task-id-changed', onTaskIdChanged)
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 引导同步仅在挂载与 task_id 变更事件触发
+    }, [])
 
     useEffect(() => {
       onProgressSnapshot?.({
@@ -655,13 +791,6 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       onlyNewAfterUpload?: boolean
       sessionOnly?: boolean
     }) => {
-      if (useMockData) {
-        const rows = pendingRows
-        if (!options?.silent) {
-          messageApi.success(`已刷新提取结果，共 ${rows.length} 条`)
-        }
-        return rows
-      }
       try {
         setLoadingPending(true)
         const response = await getPendingIndexes()
@@ -675,11 +804,24 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
             uploadSessionPendingIdsRef.current = new Set(baseRows.map((row) => String(row.id)))
           }
         }
-        const rows =
+        let rows =
           options?.sessionOnly && uploadSessionPendingIdsRef.current.size > 0
             ? baseRows.filter((row) => uploadSessionPendingIdsRef.current.has(String(row.id)))
             : baseRows
-        setPendingRows(rows)
+        // 上传会话里的 id（如 parse-*）与 GET step/2 返回的新 id（s2-ind-*）不一致时，会话过滤会把表滤空，此时展示全量后端数据
+        if (rows.length === 0 && baseRows.length > 0) {
+          rows = baseRows
+        }
+        // onlyNewAfterUpload 若误杀全部行，再回退到未过滤的接口结果
+        if (rows.length === 0 && allRows.length > 0) {
+          rows = allRows
+        }
+        setPendingRows((prev) => mergeAuditStatusPreserve(prev, rows, 'enterprise'))
+        if ('referenceExtracts' in response) {
+          setReferenceRows((prev) =>
+            mergeAuditStatusPreserve(prev, response.referenceExtracts ?? [], 'reference'),
+          )
+        }
         if (!options?.silent) {
           messageApi.success(`已刷新提取结果，共 ${rows.length} 条`)
         }
@@ -692,6 +834,36 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         setLoadingPending(false)
       }
     }
+
+    /** 进入「规范性引用与企标指标提取审核」步骤时，拉取 GET .../step/2 展示 suggested_references + indicators */
+    useEffect(() => {
+      if (current !== 2) return
+      let cancelled = false
+      void (async () => {
+        try {
+          setLoadingPending(true)
+          const response = await getPendingIndexes()
+          if (cancelled) return
+          clearPendingPollTimer()
+          pendingPollFinishedRef.current = true
+          setPendingRows((prev) => mergeAuditStatusPreserve(prev, response.data, 'enterprise'))
+          if ('referenceExtracts' in response) {
+            setReferenceRows((prev) =>
+              mergeAuditStatusPreserve(prev, response.referenceExtracts ?? [], 'reference'),
+            )
+          }
+        } catch (e) {
+          if (!cancelled) {
+            messageApi.error(e instanceof Error ? e.message : '加载审核2数据失败')
+          }
+        } finally {
+          if (!cancelled) setLoadingPending(false)
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }, [current, messageApi])
 
     const parseFileName = (contentDisposition?: string) => {
       if (!contentDisposition) {
@@ -825,36 +997,6 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         messageApi.warning('请先上传标准文档')
         return
       }
-      if (useMockData) {
-        setUploading(true)
-        const mockReferenceRows = createMockReferenceRows()
-        const mockEnterpriseRows = createMockEnterpriseRows()
-        setReferenceRows(mockReferenceRows)
-        setPendingRows(mockEnterpriseRows)
-        uploadSessionPendingIdsRef.current = new Set(mockEnterpriseRows.map((item) => String(item.id)))
-        setLatestUploadedBzIds([MOCK_ENTERPRISE_BZ_ID])
-        setLatestUploadedBzId(MOCK_ENTERPRISE_BZ_ID)
-        setReportBzId(MOCK_ENTERPRISE_BZ_ID)
-        setDescriptiveReview({
-          bzId: MOCK_ENTERPRISE_BZ_ID,
-          enterpriseName: MOCK_ENTERPRISE_NAME,
-          decision: 'pending',
-          isCompliant: 'pending',
-          nonComplianceReasons: [],
-          nonComplianceDetail: '',
-          reviewConclusion: '',
-          updatedAt: '',
-        })
-        setSummaryDraft((prev) => ({
-          ...prev,
-          descriptive: prev.descriptive.trim() || `企标号：${MOCK_ENTERPRISE_BZ_ID}；企业名称：${MOCK_ENTERPRISE_NAME}`,
-        }))
-        messageApi.success('模拟数据已加载，可继续完整流程演示。')
-        afterUploadSuccess?.()
-        setCurrent(1)
-        setUploading(false)
-        return
-      }
       try {
         setUploading(true)
         pendingPollFinishedRef.current = false
@@ -895,8 +1037,9 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
             }
             return {
               fileName: targetFile.name,
-              references: referencesResult.value?.data,
-              indexes: indexesResult.status === 'fulfilled' ? indexesResult.value?.data : undefined,
+              references: referencesResult.value?.data as unknown,
+              indexes:
+                indexesResult.status === 'fulfilled' ? (indexesResult.value?.data as unknown) : undefined,
               indexesFailed: indexesResult.status === 'rejected',
             }
           }),
@@ -976,8 +1119,16 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         } else {
           messageApi.success(`已提交 ${successfulUploads.length} 个文件，后端正在异步解析。`)
         }
+        const tidPoll = getComplianceEvaluationTaskId()
+        if (tidPoll != null) {
+          const settled = await pollComplianceEvaluationUntilParseSettled(tidPoll)
+          if (settled.parse_status === 'failed') {
+            messageApi.warning(`企标解析失败：${settled.parse_error ?? '请检查上传文件或后端日志'}`)
+          }
+        }
         afterUploadSuccess?.()
         setCurrent(1)
+        void refreshBackendStepPolicy()
         await refreshPending({ silent: true, onlyNewAfterUpload: true, sessionOnly: true })
         pollPendingAfterUpload()
       } catch (error) {
@@ -988,18 +1139,17 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       }
     }
 
-    const canAudit = (item: PendingIndexItem) => useMockData || Number.isFinite(Number(item.id))
+    /**
+     * 是否允许单条审核/行内编辑。
+     * 旧版 `audit/pending_indexes` 使用数字字符串主键，故曾用 `Number.isFinite(Number(id))` 判断。
+     * 新后端适配数据使用稳定字符串主键（如 `parse-*`、`s2-ind-*`、`upload-auto-*`），与 `POST .../step/2/confirm` 整表同步一致，只需非空 id 即可。
+     */
+    const canAudit = (item: PendingIndexItem) => {
+      const id = String(item.id ?? '').trim()
+      return id.length > 0
+    }
 
     const submitSingleAudit = async (item: PendingIndexItem, action: 'approve' | 'reject') => {
-      if (useMockData) {
-        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
-        setPendingRows((prev) => prev.map((row) => (row.id === item.id ? { ...row, statusText: nextStatusText } : row)))
-        setReferenceRows((prev) =>
-          prev.map((row) => (row.id === item.id ? { ...row, statusText: nextStatusText } : row)),
-        )
-        messageApi.success(action === 'approve' ? '已通过该记录（模拟）' : '已驳回该记录（模拟）')
-        return
-      }
       if (!canAudit(item)) {
         messageApi.warning('该记录缺少可用ID，暂不可审核')
         return
@@ -1007,8 +1157,18 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       try {
         setAuditingId(item.id)
         await submitAuditDecision(item.id, action)
-        messageApi.success(action === 'approve' ? '已通过该记录' : '已驳回该记录')
-        await refreshPending({ sessionOnly: true })
+        const synced = await trySyncEvaluationStep2(referenceRows, pendingRows)
+        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
+        setPendingRows((prev) => prev.map((row) => (row.id === item.id ? { ...row, statusText: nextStatusText } : row)))
+        setReferenceRows((prev) =>
+          prev.map((row) => (row.id === item.id ? { ...row, statusText: nextStatusText } : row)),
+        )
+        if (synced) {
+          messageApi.success(action === 'approve' ? '已通过该记录' : '已驳回该记录')
+          await refreshPending({ sessionOnly: true })
+        } else {
+          messageApi.success(action === 'approve' ? '已通过该记录（本地）' : '已驳回该记录（本地）')
+        }
       } catch (error) {
         const text = error instanceof Error ? error.message : '审核失败'
         messageApi.error(text)
@@ -1023,18 +1183,21 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         messageApi.warning('没有可批量审核的数据')
         return
       }
-      if (useMockData) {
-        const idSet = new Set(ids)
-        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
-        setPendingRows((prev) => prev.map((row) => (idSet.has(row.id) ? { ...row, statusText: nextStatusText } : row)))
-        messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条（模拟）` : `已一键驳回 ${ids.length} 条（模拟）`)
-        return
-      }
       try {
         setBulkAction(action)
         await submitAuditBulkDecision(ids, action)
-        messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条` : `已一键驳回 ${ids.length} 条`)
-        await refreshPending({ sessionOnly: true })
+        const synced = await trySyncEvaluationStep2(referenceRows, pendingRows)
+        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
+        const idSet = new Set(ids)
+        setPendingRows((prev) =>
+          prev.map((row) => (idSet.has(row.id) ? { ...row, statusText: nextStatusText } : row)),
+        )
+        if (synced) {
+          messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条` : `已一键驳回 ${ids.length} 条`)
+          await refreshPending({ sessionOnly: true })
+        } else {
+          messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条（本地）` : `已一键驳回 ${ids.length} 条（本地）`)
+        }
       } catch (error) {
         const text = error instanceof Error ? error.message : '批量审核失败'
         messageApi.error(text)
@@ -1049,20 +1212,21 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         messageApi.warning('没有可批量审核的规范性引用指标数据')
         return
       }
-      if (useMockData) {
-        const idSet = new Set(ids)
-        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
-        setReferenceRows((prev) =>
-          prev.map((row) => (idSet.has(row.id) ? { ...row, statusText: nextStatusText } : row)),
-        )
-        messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条（模拟）` : `已一键驳回 ${ids.length} 条（模拟）`)
-        return
-      }
       try {
         setReferenceBulkAction(action)
         await submitAuditBulkDecision(ids, action)
-        messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条` : `已一键驳回 ${ids.length} 条`)
-        await refreshPending({ sessionOnly: true })
+        const synced = await trySyncEvaluationStep2(referenceRows, pendingRows)
+        const nextStatusText = action === 'approve' ? '审核通过' : '审核驳回'
+        const idSet = new Set(ids)
+        setReferenceRows((prev) =>
+          prev.map((row) => (idSet.has(row.id) ? { ...row, statusText: nextStatusText } : row)),
+        )
+        if (synced) {
+          messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条` : `已一键驳回 ${ids.length} 条`)
+          await refreshPending({ sessionOnly: true })
+        } else {
+          messageApi.success(action === 'approve' ? `已一键通过 ${ids.length} 条（本地）` : `已一键驳回 ${ids.length} 条（本地）`)
+        }
       } catch (error) {
         const text = error instanceof Error ? error.message : '批量审核失败'
         messageApi.error(text)
@@ -1100,34 +1264,29 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           messageApi.warning('请完整填写指标名称和指标值后再保存。')
           return
         }
-        if (useMockData) {
-          const applyEdit = (row: PendingIndexItem) =>
-            row.id === item.id
-              ? {
-                  ...row,
-                  standardName: editingDraft.standardName.trim() || row.standardName,
-                  indicatorName: editingDraft.indicatorName.trim(),
-                  indicatorValue: editingDraft.indicatorValue.trim(),
-                  statusText: '审核通过',
-                }
-              : row
-          setPendingRows((prev) => prev.map(applyEdit))
-          setReferenceRows((prev) => prev.map(applyEdit))
-          messageApi.success('已提交人工修正并通过审核（模拟）')
-          cancelInlineEdit()
-          return
-        }
         setEditSaving(true)
-        await submitAuditDecision(item.id, 'approve', {
-          modified_bz_id: editingDraft.standardName.trim() || item.standardName.trim(),
-          modified_index_name: editingDraft.indicatorName.trim(),
-          modified_content: {
-            indicator_value: editingDraft.indicatorValue.trim(),
-          },
-        })
-        messageApi.success('已提交人工修正并通过审核')
+        const applyEdit = (row: PendingIndexItem) =>
+          row.id === item.id
+            ? {
+                ...row,
+                standardName: editingDraft.standardName.trim() || row.standardName,
+                indicatorName: editingDraft.indicatorName.trim(),
+                indicatorValue: editingDraft.indicatorValue.trim(),
+                statusText: '审核通过',
+              }
+            : row
+        const nextPending = pendingRows.map(applyEdit)
+        const nextRef = referenceRows.map(applyEdit)
+        setPendingRows(nextPending)
+        setReferenceRows(nextRef)
         cancelInlineEdit()
-        await refreshPending({ sessionOnly: true })
+        const synced = await trySyncEvaluationStep2(nextRef, nextPending)
+        if (synced) {
+          messageApi.success('已提交人工修正并通过审核')
+          await refreshPending({ sessionOnly: true })
+        } else {
+          messageApi.success('已提交人工修正（本地），进入审核2后将同步到后端')
+        }
       } catch (error) {
         const text = error instanceof Error ? error.message : '提交修正失败'
         messageApi.error(text)
@@ -1149,52 +1308,23 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         messageApi.warning('暂无可校验的引用标准编号，请先完成提取。')
         return
       }
-      if (useMockData) {
-        const results = uniqueIds.map((id) => ({
-          queryBzId: id,
-          isLatest: id.includes('2020') || id.includes('2002'),
-          currentLatestId: id.includes('2016') ? id.replace('2016', '2020') : id,
-          pedigreeChain: id.includes('2016') ? `${id.replace('2016', '2020')} -> ${id}` : `${id}`,
-        }))
-        setLatestStandardRows(results)
-        setValidityReviewDecision('pending')
-        setManualLatestStandardIds([])
-        setManualLatestStandardInput('')
-        setSummaryDraft((prev) => ({
-          ...prev,
-          validity:
-            prev.validity.trim() ||
-            `共校验 ${results.length} 条引用标准，需更新 ${results.filter((item) => !item.isLatest).length} 条。`,
-        }))
-        messageApi.success('已生成模拟的引用标准有效性与更替信息。')
-        return
-      }
       try {
         setValidityLoading(true)
         setSavedMappingIds(new Set())
-        const results = await Promise.all(
-          uniqueIds.map(async (id) => {
-            try {
-              return await checkLatestStandard(id)
-            } catch {
-              return {
-                queryBzId: id,
-                isLatest: true,
-                currentLatestId: id,
-                pedigreeChain: '后端未返回谱系链（接口联调中）',
-              } satisfies StandardLatestCheckResult
-            }
-          }),
-        )
+        const { results, file_compliance_outcome } = await checkLatestStandardsBatch(uniqueIds)
         setLatestStandardRows(results)
         setValidityReviewDecision('pending')
         setManualLatestStandardIds([])
         setManualLatestStandardInput('')
-        const outdatedCount = results.filter((item) => !item.isLatest).length
+        const outdatedCount = results.filter((item) => isRowCitationAutoOutdated(item)).length
+        const taskHint =
+          file_compliance_outcome != null
+            ? `（整文件：${fileComplianceOutcomeLabel(file_compliance_outcome)}）`
+            : ''
         messageApi.success(
           outdatedCount > 0
-            ? `校验完成，发现 ${outdatedCount} 条引用标准存在更新`
-            : '校验完成，当前引用标准均为最新',
+            ? `校验完成，发现 ${outdatedCount} 条可自动比对且与现行主号不一致${taskHint}`
+            : `校验完成，其中自动判定与现行主号一致 ${results.filter((item) => isRowCitationAutoLatest(item)).length} 条${taskHint}`,
         )
       } finally {
         setValidityLoading(false)
@@ -1225,7 +1355,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       setValidityReviewDecision('pending')
       setSummaryDraft((prev) => ({
         ...prev,
-        validity: `共核验 ${nextRows.length} 条引用标准（人工补录后），其中需更新 ${nextRows.filter((item) => !item.isLatest).length} 条。`,
+        validity: `共核验 ${nextRows.length} 条引用标准（人工补录后），其中自动判定需更新 ${nextRows.filter((item) => isRowCitationAutoOutdated(item)).length} 条。`,
       }))
       messageApi.success('已保存该条引用标准有效性记录。')
     }
@@ -1289,46 +1419,62 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         messageApi.warning(`存在未填写完整的行（${invalidRow.queryBzId || '未命名行'}），请先补全。`)
         return
       }
-      if (useMockData) {
-        setSavedMappingIds(new Set(latestStandardRows.map((row) => row.queryBzId)))
-      } else {
-        try {
-          setValidityLoading(true)
-          const settled = await Promise.allSettled(
-            latestStandardRows.map(async (row) =>
-              saveReferenceMapping({
-                enterprise_bz_id: row.queryBzId.trim(),
-                national_bz_id: row.currentLatestId.trim(),
-              }),
-            ),
-          )
-          const failed = settled
-            .map((result, index) => ({ result, row: latestStandardRows[index] }))
-            .filter((item) => item.result.status === 'rejected')
-          if (failed.length > 0) {
-            messageApi.error(
-              `映射入库失败 ${failed.length} 条（示例：${failed[0]?.row.queryBzId}），请检查后重试。`,
-            )
-            return
-          }
-          setSavedMappingIds(new Set(latestStandardRows.map((row) => row.queryBzId)))
-        } catch (error) {
-          const text = error instanceof Error ? error.message : '批量映射入库失败'
-          messageApi.error(text)
+      try {
+        setValidityLoading(true)
+        const tid = getComplianceEvaluationTaskId()
+        if (tid == null) {
+          messageApi.error('缺少评价任务上下文，无法提交审核 3')
           return
-        } finally {
-          setValidityLoading(false)
         }
+        const settled = await Promise.allSettled(
+          latestStandardRows.map(async (row) =>
+            saveReferenceMapping({
+              enterprise_bz_id: row.queryBzId.trim(),
+              national_bz_id: row.currentLatestId.trim(),
+            }),
+          ),
+        )
+        const failed = settled
+          .map((result, index) => ({ result, row: latestStandardRows[index] }))
+          .filter((item) => item.result.status === 'rejected')
+        if (failed.length > 0) {
+          messageApi.error(
+            `映射入库失败 ${failed.length} 条（示例：${failed[0]?.row.queryBzId}），请检查后重试。`,
+          )
+          return
+        }
+        await confirmEvaluationAuditStep3(tid, {
+          rows: latestStandardRows.map((row) => ({
+            referenced_std_code: row.queryBzId.trim(),
+            latest_std_code: row.currentLatestId.trim(),
+            manual_review_status: row.isLatest ? 'approved' : 'needs_update',
+            is_latest: row.isLatest,
+            pedigree_chain: row.pedigreeChain.trim() || null,
+          })),
+        })
+        setSavedMappingIds(new Set(latestStandardRows.map((row) => row.queryBzId)))
+      } catch (error) {
+        const text = error instanceof Error ? error.message : '批量映射入库失败'
+        messageApi.error(text)
+        return
+      } finally {
+        setValidityLoading(false)
       }
       setValidityReviewDecision('complete')
+      const unresolvedSubmit = latestStandardRows.filter(
+        (r) => r.resolutionPath === 'unresolved_no_historical_row',
+      ).length
       setSummaryDraft((prev) => ({
         ...prev,
-        validity: `引用标准有效性与更替已完成人工审核，共 ${latestStandardRows.length} 条，数据完整并已同步映射入库。`,
+        validity: `引用标准有效性与更替已完成人工审核，共 ${latestStandardRows.length} 条，数据完整并已同步映射入库${
+          unresolvedSubmit > 0 ? `（含 ${unresolvedSubmit} 条国标历史未命中项，已在表格中标注）` : ''
+        }。`,
       }))
-      messageApi.success('已人工审核数据完整并同步存入映射。')
+      messageApi.success('已人工审核并提交审核 3（含映射与确认），后端已推进至步骤 4。')
+      void refreshBackendStepPolicy()
     }
 
-    const submitDescriptiveReview = (decision: 'approve' | 'reject') => {
+    const submitDescriptiveReview = async (decision: 'approve' | 'reject') => {
       const bzId = descriptiveReview.bzId.trim()
       const enterpriseName = descriptiveReview.enterpriseName.trim()
       const autoGeneratedConclusion = buildDescriptiveConclusion(descriptiveReview)
@@ -1361,6 +1507,28 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           return
         }
       }
+      if (decision === 'approve') {
+        const tid = getComplianceEvaluationTaskId()
+        if (tid != null) {
+          try {
+            const snapshot = await getEvaluation(tid)
+            if (snapshot.parse_status !== 'completed') {
+              messageApi.warning(
+                `企标解析尚未成功完成（当前：${snapshot.parse_status}），请先等待解析结束后再提交审核 1。`,
+              )
+              return
+            }
+            await confirmEvaluationAuditStep1(tid, {
+              qb_code: bzId,
+              company_name: enterpriseName || null,
+              qb_name: null,
+            })
+          } catch (error) {
+            messageApi.error(getComplianceApiErrorMessage(error))
+            return
+          }
+        }
+      }
       const auditTime = formatAuditTime(new Date())
       setDescriptiveReview((prev) => ({
         ...prev,
@@ -1369,7 +1537,109 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         reviewConclusion: reviewConclusion || prev.reviewConclusion,
       }))
       syncDescriptiveToStepSix(true)
+      void refreshBackendStepPolicy()
       messageApi.success(decision === 'approve' ? '描述性评价已通过第一次人工审核' : '描述性评价已驳回，请修改后再审核')
+    }
+
+    /** 离开审核 2 前强制同步 `POST .../step/2/confirm`，避免后端仍停留在步骤 2 却已进入审核 3 界面 */
+    const goToNextWizardStep = async () => {
+      if (current >= WIZARD_STEP_TITLES.length - 1) return
+      setWizardNextLoading(true)
+      try {
+        if (current === 2) {
+          const tid = getComplianceEvaluationTaskId()
+          if (tid != null) {
+            try {
+              const ev = await getEvaluation(tid)
+              if (ev.current_step < 2) {
+                messageApi.warning('请先在「描述性合规评价」完成审核 1 并通过，将任务推进到审核 2。')
+                return
+              }
+              if (ev.current_step === 2) {
+                const synced = await trySyncEvaluationStep2(referenceRows, pendingRows)
+                if (!synced) {
+                  messageApi.error(
+                    '提交审核 2 失败：请确认后端为 MySQL、网络正常，且引用与指标数据有效后重试。',
+                  )
+                  return
+                }
+              }
+            } catch (error) {
+              messageApi.error(getComplianceApiErrorMessage(error))
+              return
+            }
+          }
+        }
+        if (current === 3) {
+          const tid = getComplianceEvaluationTaskId()
+          if (tid != null) {
+            try {
+              const ev = await getEvaluation(tid)
+              if (ev.current_step < 4) {
+                messageApi.warning(
+                  '请先在本页点击「人工审核数据完整并导入映射」，成功提交审核 3 后再进入技术指标对比。',
+                )
+                return
+              }
+            } catch (error) {
+              messageApi.error(getComplianceApiErrorMessage(error))
+              return
+            }
+          }
+        }
+        if (current === 4) {
+          const tid = getComplianceEvaluationTaskId()
+          if (tid != null) {
+            try {
+              const ev = await getEvaluation(tid)
+              if (ev.current_step === 4) {
+                if (!comparisonAuditPassed) {
+                  messageApi.warning('请先完成「技术指标对比」的人工审核确认，再进入总结步骤。')
+                  return
+                }
+                await confirmEvaluationAuditStep4(tid)
+              }
+            } catch (error) {
+              messageApi.error(getComplianceApiErrorMessage(error))
+              return
+            }
+          }
+        }
+        setCurrent((prev) => Math.min(WIZARD_STEP_TITLES.length - 1, prev + 1))
+        void refreshBackendStepPolicy()
+      } finally {
+        setWizardNextLoading(false)
+      }
+    }
+
+    /** 顶部 Steps 与后端 `current_step` 对齐，禁止未 confirm 即跳步（接入流程指南 §1.1） */
+    const onWizardStepsChange = async (next: number): Promise<boolean> => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        if (next > 0) {
+          messageApi.warning('请先完成上传以创建并绑定评价任务。')
+          return false
+        }
+        setBackendMaxWizardIndex(0)
+        setCurrent(0)
+        return true
+      }
+      try {
+        const ev = await getEvaluation(tid)
+        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
+        setBackendMaxWizardIndex(maxIdx)
+        if (next > maxIdx) {
+          messageApi.warning(
+            `后端当前为步骤 ${ev.current_step}，无法跳转到第 ${next + 1} 步。请先完成前置确认（以服务端 current_step 为准）。`,
+          )
+          return false
+        }
+        setCurrent(next)
+        return true
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+        return false
+      }
     }
 
     const startEditComparisonRow = (row: ComparePreviewRow) => {
@@ -1443,70 +1713,25 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       messageApi.success('技术指标对比已人工审核通过')
     }
 
-    const buildComparePreview = async () => {
+    const buildComparePreview = async (options?: { diagnosticsOnly?: boolean }) => {
+      const diagnosticsOnly = options?.diagnosticsOnly === true
       const referenceCodes = Array.from(
         new Set(referenceRows.map((item) => item.standardName.trim()).filter((item) => item && item !== '-')),
       )
       if (referenceCodes.length === 0) {
-        messageApi.warning('缺少规范性引用文件编号，无法构建技术对比。')
-        return
-      }
-
-      if (useMockData) {
-        setComparisonLoading(true)
-        const oldRows = MOCK_OLD_REFERENCE_INDEX_ROWS
-        const latestRows = MOCK_LATEST_REFERENCE_INDEX_ROWS
-        setOldReferenceIndexRows(oldRows)
-        setLatestReferenceIndexRows(latestRows)
-        setMissingOldReferenceFiles(referenceCodes.filter((code) => !oldRows.some((item) => item.standardId === code)))
-        const latestTargets = Array.from(
-          new Set([
-            ...referenceCodes.map((code) => (code.includes('2016') ? code.replace('2016', '2020') : code)),
-            ...manualLatestStandardIds,
-          ]),
-        )
-        setMissingLatestReferenceFiles(
-          latestTargets.filter((code) => !latestRows.some((item) => item.standardId === code)),
-        )
-
-        const enterpriseRows = pendingRows.map((item, idx) => ({
-          id: item.id || `enterprise-${idx}`,
-          standardId: item.standardName || latestUploadedBzId || '-',
-          indexName: item.indicatorName,
-          indexValue: item.indicatorValue,
-        }))
-        const oldBaselineRows = [...oldRows, ...enterpriseRows]
-        const previewRows: ComparePreviewRow[] = oldBaselineRows.map((item, idx) => {
-          const comparison = buildComparisonResult(item.indexName, item.indexValue, latestRows)
-          return {
-            id: item.id || `compare-mock-${idx + 1}`,
-            indicatorName: item.indexName,
-            enterpriseValue: item.indexValue,
-            matchedStandard: comparison.matchedStandard,
-            nationalValue: comparison.nationalValue,
-            status: comparison.status,
-            source: 'enterprise_or_old',
-            baselineStandard: item.standardId,
-            latestStandard: comparison.latestStandard,
-          }
-        })
-        setComparePreview(previewRows)
-        setSummaryDraft((prev) => ({
-          ...prev,
-          technical:
-            prev.technical.trim() ||
-            `模拟对比完成：旧基线 ${oldBaselineRows.length} 条，最新基线 ${latestRows.length} 条。`,
-        }))
-        setComparisonLoading(false)
-        messageApi.success('已生成模拟技术指标对比表。')
+        if (!diagnosticsOnly) {
+          messageApi.warning('缺少规范性引用文件编号，无法构建技术对比。')
+        }
         return
       }
 
       try {
         setComparisonLoading(true)
-        setComparisonAuditPassed(false)
+        if (!diagnosticsOnly) {
+          setComparisonAuditPassed(false)
+        }
 
-        const [oldResponses, latestChecks] = await Promise.all([
+        const [oldResponses, latestBatch] = await Promise.all([
           Promise.all(
             referenceCodes.map(async (code) => {
               try {
@@ -1516,21 +1741,9 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
               }
             }),
           ),
-          Promise.all(
-            referenceCodes.map(async (code) => {
-              try {
-                return await checkLatestStandard(code)
-              } catch {
-                return {
-                  queryBzId: code,
-                  isLatest: true,
-                  currentLatestId: code,
-                  pedigreeChain: '-',
-                } as StandardLatestCheckResult
-              }
-            }),
-          ),
+          checkLatestStandardsBatch(referenceCodes),
         ])
+        const latestChecks = latestBatch.results
 
         const oldRows = oldResponses.flatMap((response) => response.data)
         setOldReferenceIndexRows(oldRows)
@@ -1556,6 +1769,10 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         setLatestReferenceIndexRows(latestRows)
         const missingLatestFiles = latestIds.filter((_code, index) => (latestResponses[index]?.data?.length ?? 0) === 0)
         setMissingLatestReferenceFiles(missingLatestFiles)
+
+        if (diagnosticsOnly) {
+          return
+        }
 
         const enterpriseRows = pendingRows.map((item, idx) => ({
           id: item.id || `enterprise-${idx}`,
@@ -1597,22 +1814,44 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       }
     }
 
+    /** 进入「指标映射与技术对比」步后：立即拉取编排缺件 + 引用侧诊断，避免左上角卡牌长时间为 0 */
+    useEffect(() => {
+      if (current !== 4) {
+        setStep4BackendMissingGb([])
+        return
+      }
+      let cancelled = false
+      void (async () => {
+        const tid = getComplianceEvaluationTaskId()
+        if (tid == null) return
+        try {
+          const ev = await getEvaluation(tid)
+          if (cancelled || ev.current_step < 4) return
+          const s4 = await getStep4Indicators(tid)
+          if (cancelled) return
+          setStep4BackendMissingGb(s4.missing_gb_files ?? [])
+        } catch {
+          if (!cancelled) setStep4BackendMissingGb([])
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+    }, [current])
+
+    useEffect(() => {
+      if (current !== 4) return
+      if (referenceRows.length === 0) return
+      void buildComparePreview({ diagnosticsOnly: true })
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在进入本步或引用行数量变化时刷新诊断数字，避免依赖整个 buildComparePreview
+    }, [current, referenceRows.length])
+
     const uploadRepairReferenceFiles = async () => {
       const files = repairUploadFiles
         .map((item) => item.originFileObj)
         .filter(Boolean) as File[]
       if (files.length === 0) {
         messageApi.warning('请先选择需要补齐的引用标准文件')
-        return
-      }
-      if (useMockData) {
-        setRepairUploading(true)
-        setTimeout(() => {
-          setRepairUploading(false)
-          setRepairUploadFiles([])
-          void buildComparePreview()
-          messageApi.success(`模拟补齐完成，共处理 ${files.length} 个文件。`)
-        }, 500)
         return
       }
       try {
@@ -1943,93 +2182,6 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       },
     ]
 
-    const latestStandardColumns: ColumnsType<StandardLatestCheckResult> = [
-      {
-        title: '引用标准',
-        dataIndex: 'queryBzId',
-        key: 'queryBzId',
-        width: 180,
-        render: (value: string, row) =>
-          validityEditingId === row.queryBzId ? (
-            <Input
-              size="small"
-              value={validityDraft?.queryBzId ?? value}
-              onChange={(event) =>
-                setValidityDraft((prev) => (prev ? { ...prev, queryBzId: event.target.value } : prev))
-              }
-            />
-          ) : (
-            value
-          ),
-      },
-      {
-        title: '最新性',
-        dataIndex: 'isLatest',
-        key: 'isLatest',
-        width: 110,
-        render: (isLatest: boolean, row) =>
-          validityEditingId === row.queryBzId ? (
-            <Radio.Group
-              size="small"
-              value={validityDraft?.isLatest ? 'latest' : 'outdated'}
-              onChange={(event) =>
-                setValidityDraft((prev) =>
-                  prev ? { ...prev, isLatest: event.target.value === 'latest' } : prev,
-                )
-              }
-            >
-              <Radio.Button value="latest">最新</Radio.Button>
-              <Radio.Button value="outdated">需更新</Radio.Button>
-            </Radio.Group>
-          ) : (
-            <Tag color={isLatest ? 'success' : 'warning'}>{isLatest ? '最新' : '需更新'}</Tag>
-          ),
-      },
-      {
-        title: '最新标准',
-        dataIndex: 'currentLatestId',
-        key: 'currentLatestId',
-        width: 180,
-        render: (value: string, row) =>
-          validityEditingId === row.queryBzId ? (
-            <Input
-              size="small"
-              value={validityDraft?.currentLatestId ?? value}
-              onChange={(event) =>
-                setValidityDraft((prev) => (prev ? { ...prev, currentLatestId: event.target.value } : prev))
-              }
-            />
-          ) : (
-            value || '-'
-          ),
-      },
-      {
-        title: '操作',
-        key: 'action',
-        width: 170,
-        render: (_value, row) =>
-          validityEditingId === row.queryBzId ? (
-            <Space size={6}>
-              <Button size="small" type="primary" onClick={saveValidityRow}>
-                保存
-              </Button>
-              <Button size="small" onClick={cancelEditValidityRow}>
-                取消
-              </Button>
-            </Space>
-          ) : (
-            <Space size={6}>
-              <Button size="small" onClick={() => startEditValidityRow(row)}>
-                编辑
-              </Button>
-              <Button size="small" danger onClick={() => removeValidityRow(row.queryBzId)}>
-                删除
-              </Button>
-            </Space>
-          ),
-      },
-    ]
-
     const stepGuideItems = [
       '第1步：上传企标文件并触发规范性引用、指标解析链路。',
       '第2步：描述性合规评价与第一次人工审核。',
@@ -2046,11 +2198,17 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
     const validitySummary = useMemo(() => {
       const total = latestStandardRows.length
-      const outdated = latestStandardRows.filter((item) => !item.isLatest).length
-      const latest = total - outdated
+      const outdated = latestStandardRows.filter((item) => isRowCitationAutoOutdated(item)).length
+      const latest = latestStandardRows.filter((item) => isRowCitationAutoLatest(item)).length
+      const undeterminedAuto = latestStandardRows.filter(
+        (item) => !item.complianceAssessable || item.citationMatchesLatest === null,
+      ).length
       const mapped = latestStandardRows.filter((item) => savedMappingIds.has(item.queryBzId)).length
       const unmapped = Math.max(total - mapped, 0)
-      return { total, latest, outdated, mapped, unmapped }
+      const unresolvedLibrary = latestStandardRows.filter(
+        (item) => item.resolutionPath === 'unresolved_no_historical_row',
+      ).length
+      return { total, latest, outdated, undeterminedAuto, mapped, unmapped, unresolvedLibrary }
     }, [latestStandardRows, savedMappingIds])
 
     const technicalSummary = useMemo(() => {
@@ -2191,7 +2349,12 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       if (technicalSummary.total === 0 || validitySummary.total === 0 || descriptiveReview.decision !== 'approve') {
         return { label: '待判定', color: 'default', reason: '关键步骤尚未完成，暂不建议出具星级。' }
       }
-      if (validitySummary.outdated > 0 || technicalSummary.unmatched > 0 || technicalSummary.manual > 0) {
+      if (
+        validitySummary.outdated > 0 ||
+        validitySummary.undeterminedAuto > 0 ||
+        technicalSummary.unmatched > 0 ||
+        technicalSummary.manual > 0
+      ) {
         return { label: '★★★', color: 'warning', reason: '存在待更新引用或需人工判定项。' }
       }
       if (technicalSummary.nonCompliant === 0 && technicalSummary.compliant === technicalSummary.total) {
@@ -2207,13 +2370,18 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       technicalSummary.compliant,
       validitySummary.total,
       validitySummary.outdated,
+      validitySummary.undeterminedAuto,
     ])
 
     const generateSummaryDraftFromWorkflow = () => {
       const descriptiveText = descriptiveReview.reviewConclusion.trim() || buildDescriptiveConclusion(descriptiveReview)
       setSummaryDraft({
         descriptive: descriptiveText,
-        validity: `共核验 ${validitySummary.total} 条引用标准，其中现行 ${validitySummary.latest} 条、需更新 ${validitySummary.outdated} 条；已保存映射 ${validitySummary.mapped} 条，待保存 ${validitySummary.unmapped} 条。`,
+        validity: `共核验 ${validitySummary.total} 条引用标准，其中自动判定与现行主号一致 ${validitySummary.latest} 条、自动判定需更新 ${validitySummary.outdated} 条、未自动评价 ${validitySummary.undeterminedAuto} 条；已保存映射 ${validitySummary.mapped} 条，待保存 ${validitySummary.unmapped} 条${
+          validitySummary.unresolvedLibrary > 0
+            ? `；其中 ${validitySummary.unresolvedLibrary} 条未能从国标历史推断到企标制定时点对应的版本（请结合「发布时引用的完整的企标号」与「说明 / 谱系」列核对）`
+            : ''
+        }。`,
         technical: `技术指标对比共 ${technicalSummary.total} 项：已命中 ${technicalSummary.matched} 项、未命中 ${technicalSummary.unmatched} 项；单项结果为合规 ${technicalSummary.compliant} 项、不合规 ${technicalSummary.nonCompliant} 项、需人工判定 ${technicalSummary.manual} 项。`,
       })
       lastAutoDescriptiveRef.current = descriptiveText
@@ -2228,9 +2396,53 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       void onExportReport()
     }
 
-    const jumpToChecklistStep = (step: number) => {
-      setCurrent(step)
-      messageApi.info(`已跳转到第 ${step + 1} 步，请先完成该检查项。`)
+    const resolveComplianceExportBzId = () =>
+      descriptiveReview.bzId.trim() || reportBzId.trim() || latestUploadedBzId.trim()
+
+    const exportStepSixDescriptiveReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-描述性评价报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '描述性评价信息', bzId: bz || '-' },
+        summaryDraft.descriptive,
+      )
+      messageApi.success('已导出描述性评价报告')
+    }
+
+    const exportStepSixValidityReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-引用标准有效性报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '引用标准文件有效性及更替信息', bzId: bz || '-' },
+        summaryDraft.validity,
+      )
+      messageApi.success('已导出引用标准有效性报告')
+    }
+
+    const exportStepSixTechnicalReport = () => {
+      const bz = resolveComplianceExportBzId()
+      if (!bz || bz === '-') {
+        messageApi.warning('建议先填写「企标号」或完成上传，以便报告标题与内容对应。')
+      }
+      downloadComplianceConclusionTextReport(
+        `合规评价-技术指标对比报告-${safeFilenameSegment(bz || '未填企标号')}-${Date.now()}.txt`,
+        { section: '技术指标对比详细信息', bzId: bz || '-' },
+        summaryDraft.technical,
+      )
+      messageApi.success('已导出技术指标对比报告')
+    }
+
+    const jumpToChecklistStep = async (step: number) => {
+      const ok = await onWizardStepsChange(step)
+      if (ok) {
+        messageApi.info(`已跳转到第 ${step + 1} 步，请先完成该检查项。`)
+      }
     }
 
     return (
@@ -2242,9 +2454,10 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
               <Steps
                 size="small"
                 current={current}
-                onChange={(next) => setCurrent(next)}
+                onChange={(next) => void onWizardStepsChange(next)}
                 items={WIZARD_STEP_TITLES.map((title, index) => ({
                   title,
+                  disabled: index > backendMaxWizardIndex,
                   status: stepCompletion[index] ? 'finish' : index === current ? 'process' : 'wait',
                 }))}
               />
@@ -2260,11 +2473,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                   <Alert
                     type="info"
                     showIcon
-                    message={
-                      useMockData
-                        ? '当前为模拟数据演示模式：上传后自动注入示例数据，便于端到端走查流程。'
-                        : '支持批量上传（最多10个文件），提交后将分别执行规范性引用入库与指标入库。'
-                    }
+                    message="支持批量上传（最多10个文件），提交后将分别执行规范性引用入库与指标入库。"
                   />
                   <Upload
                     multiple
@@ -2426,10 +2635,10 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                     </Col>
                   </Row>
                   <Space wrap>
-                    <Button type="primary" onClick={() => submitDescriptiveReview('approve')}>
+                    <Button type="primary" onClick={() => void submitDescriptiveReview('approve')}>
                       通过（第一次人工审核）
                     </Button>
-                    <Button danger onClick={() => submitDescriptiveReview('reject')}>
+                    <Button danger onClick={() => void submitDescriptiveReview('reject')}>
                       驳回（第一次人工审核）
                     </Button>
                   </Space>
@@ -2523,6 +2732,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                     message="引用标准有效性与更替"
                     description="先判断引用标准是否过期，再由人工审核数据是否完整；可新增最新标准编号并纳入下一步指标对比。"
                   />
+                  {validitySummary.unresolvedLibrary > 0 ? (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={`当前有 ${validitySummary.unresolvedLibrary} 条在国标历史库中未能推断到企标制定时点对应的版本，请结合「发布时引用的完整的企标号」与「说明 / 谱系」列核对后再确认。`}
+                    />
+                  ) : null}
                   <Space wrap>
                     <Button type="primary" loading={validityLoading} onClick={runReferenceValidityCheck}>
                       生成引用标准有效性与更替信息
@@ -2563,13 +2779,16 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                       </div>
                     </div>
                   ) : null}
-                  <Table
-                    rowKey={(row, index) => `${row.queryBzId || 'row'}-${index ?? 0}`}
+                  <ReferenceLatestResolvedTable
                     dataSource={latestStandardRows}
-                    columns={latestStandardColumns}
-                    pagination={false}
-                    locale={{ emptyText: '点击上方按钮后生成有效性与更替输出' }}
-                    scroll={{ x: 1100 }}
+                    editingId={validityEditingId}
+                    draft={validityDraft}
+                    setDraft={setValidityDraft}
+                    onSaveRow={saveValidityRow}
+                    onCancelEdit={cancelEditValidityRow}
+                    onStartEdit={startEditValidityRow}
+                    onDeleteRow={removeValidityRow}
+                    emptyText="点击上方按钮后生成有效性与更替输出"
                   />
                 </Space>
               ) : null}
@@ -2635,6 +2854,24 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                             )}
                           </div>
                         </div>
+                        {step4BackendMissingGb.length > 0 ? (
+                          <div style={{ marginTop: 12 }}>
+                            <Text strong>编排侧缺件（接口 step/4，未配置国标文件路径）：</Text>
+                            <div style={{ marginTop: 6 }}>
+                              <Space size={[6, 6]} wrap>
+                                {step4BackendMissingGb.map((item) => (
+                                  <Tag key={item.std_code} color="volcano">
+                                    {item.std_code}
+                                    {item.std_name ? ` ${item.std_name}` : ''}
+                                  </Tag>
+                                ))}
+                              </Space>
+                            </div>
+                            <Text type="secondary" style={{ display: 'block', marginTop: 6 }}>
+                              上述项会导致「下一步」审核 4 确认失败，请先在本页上传补齐或联系管理员配置服务器路径。
+                            </Text>
+                          </div>
+                        ) : null}
                       </Card>
                     </Col>
                     <Col xs={24} xl={11}>
@@ -2824,7 +3061,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                                           size="small"
                                           type={isPrimaryPending ? 'primary' : 'link'}
                                           style={isPrimaryPending ? undefined : { paddingInline: 0 }}
-                                          onClick={() => jumpToChecklistStep(item.targetStep)}
+                                          onClick={() => void jumpToChecklistStep(item.targetStep)}
                                         >
                                           {item.actionText}
                                         </Button>
@@ -2848,24 +3085,45 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                       >
                         <Space direction="vertical" style={{ width: '100%' }} size={10}>
                           <Button onClick={generateSummaryDraftFromWorkflow}>一键生成三项总结草稿</Button>
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="描述性评价信息"
-                            value={summaryDraft.descriptive}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, descriptive: e.target.value }))}
-                          />
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="引用标准文件有效性及更替信息"
-                            value={summaryDraft.validity}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, validity: e.target.value }))}
-                          />
-                          <Input.TextArea
-                            rows={4}
-                            placeholder="技术指标对比详细信息"
-                            value={summaryDraft.technical}
-                            onChange={(e) => setSummaryDraft((prev) => ({ ...prev, technical: e.target.value }))}
-                          />
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="描述性评价信息"
+                              value={summaryDraft.descriptive}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, descriptive: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixDescriptiveReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="引用标准文件有效性及更替信息"
+                              value={summaryDraft.validity}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, validity: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixValidityReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
+                          <div>
+                            <Input.TextArea
+                              rows={4}
+                              placeholder="技术指标对比详细信息"
+                              value={summaryDraft.technical}
+                              onChange={(e) => setSummaryDraft((prev) => ({ ...prev, technical: e.target.value }))}
+                            />
+                            <div style={{ marginTop: 8, textAlign: 'right' }}>
+                              <Button icon={<DownloadOutlined />} onClick={exportStepSixTechnicalReport}>
+                                导出报告
+                              </Button>
+                            </div>
+                          </div>
                           <Input
                             placeholder="请输入标准号（bz_id），例如 Q/ABC 001-2026"
                             value={reportBzId}
@@ -2962,9 +3220,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                 <Button
                   type="primary"
                   disabled={current === WIZARD_STEP_TITLES.length - 1}
-                  onClick={() =>
-                    setCurrent((prev) => Math.min(WIZARD_STEP_TITLES.length - 1, prev + 1))
-                  }
+                  loading={wizardNextLoading}
+                  onClick={() => void goToNextWizardStep()}
                 >
                   下一步
                 </Button>
