@@ -67,7 +67,7 @@ export function DuplicateCheckReportModal() {
     >
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          以下为本次命中记录的摘要。相似度数值由后端「字面名称查重」接口逐条返回；多条均为 85% 时多为后端对该批候选的计算结果，与是否填写关键词/大纲无必然对应（若不填，请求里只带拟建标准名称，匹配范围会不同）。
+          以下为本次命中记录的摘要。相似度数值由后端「字面名称查重」接口逐条返回；多条均为 85% 时多为后端对该批候选的计算结果。检索框支持合并填写名称、关键词或立项说明，请求中将整段文本作为 keyword 参与一审匹配。
         </Typography.Paragraph>
 
         {report ? (
