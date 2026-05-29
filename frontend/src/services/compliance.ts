@@ -10,13 +10,17 @@ import type {
   Step1ConfirmIn,
   Step2ConfirmIn,
   Step3ConfirmIn,
+  ComparePairIn,
+  Step4IndicatorsEnsureOut,
   Step4IndicatorsOut,
+  StdCodeOrchestrationStatus,
 } from '@/types/compliance-api'
 import {
   confirmStep1,
   confirmStep2,
   confirmStep3,
   confirmStep4,
+  confirmStep5,
   createEvaluation,
   downloadArtifactFile,
   getEvaluation,
@@ -24,12 +28,21 @@ import {
   getStep2,
   getStep3ReferenceLatest,
   getStep4Indicators,
+  getStep5Compare,
+  postStep5Compare,
   listArtifacts,
   listEvaluations,
+  getNationalIndicatorsByStd,
+  putNationalIndicatorSave,
+  postNationalIndicatorReview,
   postStep3Supplements,
+  postStep4IndicatorsEnsure,
   uploadEvaluationFile,
+  uploadNationalStandard,
 } from '@/services/compliance-api'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
+import type { ComparePreviewRow } from '@/pages/compliance/comparison-types'
+import { parseStep5CompareResultToRows } from '@/pages/compliance/utils/step5CompareParse'
 
 const LS_EVAL_TASK = 'compliance_evaluation_task_id'
 
@@ -70,6 +83,11 @@ export async function confirmEvaluationAuditStep3(taskId: number, body: Step3Con
 /** 向导审核 4 完成时调用，推进后端到步骤 5 */
 export async function confirmEvaluationAuditStep4(taskId: number) {
   await confirmStep4(taskId)
+}
+
+/** 向导审核 5 完成时调用，推进后端到步骤 6 */
+export async function confirmEvaluationAuditStep5(taskId: number) {
+  await confirmStep5(taskId)
 }
 
 /**
@@ -686,6 +704,13 @@ export type GetPendingIndexesResponse = {
   referenceExtracts?: PendingIndexItem[]
 }
 
+export function step4IndicatorsToNationalItems(
+  s4: Step4IndicatorsOut,
+  filterStd?: string,
+): NationalIndexItem[] {
+  return step4ToNationalItems(s4, filterStd)
+}
+
 function step4ToNationalItems(s4: Step4IndicatorsOut, filterStd?: string): NationalIndexItem[] {
   const out: NationalIndexItem[] = []
   let seq = 0
@@ -952,18 +977,334 @@ export const checkLatestStandard = async (bzId: string): Promise<StandardLatestC
   )
 }
 
+const SS_MANUAL_SUPPLEMENTS = 'compliance_manual_supplements_'
+const SS_POSTED_SUPPLEMENTS = 'compliance_posted_supplements_'
+
+function readStringArrayFromSession(key: string): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+function writeStringArrayToSession(key: string, codes: string[]) {
+  if (typeof window === 'undefined') return
+  sessionStorage.setItem(key, JSON.stringify([...new Set(codes.map((c) => c.trim()).filter(Boolean))]))
+}
+
+/** 弹窗「新增最新标准」列表（仅 UI 展示，与 task 绑定） */
+export function loadManualSupplementStdCodes(taskId: number): string[] {
+  return readStringArrayFromSession(`${SS_MANUAL_SUPPLEMENTS}${taskId}`)
+}
+
+export function saveManualSupplementStdCodes(taskId: number, codes: string[]) {
+  writeStringArrayToSession(`${SS_MANUAL_SUPPLEMENTS}${taskId}`, codes)
+}
+
+/** 已成功 POST supplements 的标准号（含提交审核 3 时同步的 GB 最新号） */
+export function loadPostedSupplementStdCodes(taskId: number): string[] {
+  return readStringArrayFromSession(`${SS_POSTED_SUPPLEMENTS}${taskId}`)
+}
+
+export function mergePostedSupplementStdCodes(taskId: number, codes: string[]) {
+  const merged = [...loadPostedSupplementStdCodes(taskId), ...codes]
+  writeStringArrayToSession(`${SS_POSTED_SUPPLEMENTS}${taskId}`, merged)
+}
+
+/**
+ * 审核 3 阶段写入 n+m 补充行：`POST .../step/3/supplements`。
+ * @param alreadyPosted 传入可变 Set 时跳过已提交的标准号，并在成功后写入该 Set。
+ */
+export async function syncEvaluationStep3Supplements(
+  taskId: number,
+  latestStdCodes: string[],
+  alreadyPosted?: Set<string>,
+): Promise<{ posted: string[]; skipped: string[] }> {
+  const posted: string[] = []
+  const skipped: string[] = []
+  const toPost: string[] = []
+  for (const raw of latestStdCodes) {
+    const code = raw.trim()
+    if (!code) continue
+    if (alreadyPosted?.has(code)) {
+      skipped.push(code)
+      continue
+    }
+    toPost.push(code)
+  }
+  const unique = [...new Set(toPost)]
+  if (unique.length === 0) {
+    return { posted, skipped }
+  }
+  await postStep3Supplements(taskId, {
+    rows: unique.map((latest_std_code) => ({ latest_std_code })),
+  })
+  for (const code of unique) {
+    posted.push(code)
+    alreadyPosted?.add(code)
+  }
+  mergePostedSupplementStdCodes(taskId, posted)
+  return { posted, skipped }
+}
+
+/** 步骤 4 编排：拉取 N+M 侧国标指标（须 `current_step >= 4`） */
+export async function fetchStep4NationalIndexItems(taskId: number): Promise<{
+  stdCodes: string[]
+  items: NationalIndexItem[]
+  missingGbFiles: Step4IndicatorsOut['missing_gb_files']
+}> {
+  const task = await getEvaluation(taskId)
+  if (task.current_step < 4) {
+    return { stdCodes: [], items: [], missingGbFiles: [] }
+  }
+  const s4 = await getStep4Indicators(taskId)
+  return {
+    stdCodes: Object.keys(s4.national_by_std_code ?? {}),
+    items: step4ToNationalItems(s4),
+    missingGbFiles: s4.missing_gb_files ?? [],
+  }
+}
+
+export type Step4IndicatorBundleView = {
+  s4: Step4IndicatorsOut
+  oldRows: NationalIndexItem[]
+  latestRows: NationalIndexItem[]
+  missingOldStdCodes: string[]
+  missingLatestStdCodes: string[]
+}
+
+export type Step4IndicatorEnsureView = Step4IndicatorBundleView & {
+  allReady: boolean
+  stdStatuses: StdCodeOrchestrationStatus[]
+}
+
+function buildIndicatorBundleFromS4(
+  s4: Step4IndicatorsOut,
+  comparePairs: ComparePairIn[],
+): Step4IndicatorBundleView {
+  const national = s4.national_by_std_code ?? {}
+
+  const publicationCodes = [
+    ...new Set(
+      comparePairs
+        .map((p) => (p.publication_std_code ?? '').trim())
+        .filter((code) => code.length > 0),
+    ),
+  ]
+  const latestCodes = [
+    ...new Set(comparePairs.map((p) => p.latest_std_code.trim()).filter((code) => code.length > 0)),
+  ]
+
+  const oldRows: NationalIndexItem[] = []
+  for (const code of publicationCodes) {
+    oldRows.push(...nationalRowsToIndexItems(code, national[code]))
+  }
+  oldRows.push(...enterpriseRowsToIndexItems(s4))
+
+  const latestRows: NationalIndexItem[] = []
+  for (const code of latestCodes) {
+    latestRows.push(...nationalRowsToIndexItems(code, national[code]))
+  }
+
+  const hasRows = (code: string) => {
+    const rows = national[code]
+    return Array.isArray(rows) && rows.length > 0
+  }
+
+  return {
+    s4,
+    oldRows,
+    latestRows,
+    missingOldStdCodes: publicationCodes.filter((code) => !hasRows(code)),
+    missingLatestStdCodes: latestCodes.filter((code) => !hasRows(code)),
+  }
+}
+
+function nationalRowsToIndexItems(stdCode: string, rows: unknown): NationalIndexItem[] {
+  if (!Array.isArray(rows) || rows.length === 0) return []
+  const out: NationalIndexItem[] = []
+  let seq = 0
+  for (const raw of rows) {
+    const r = raw as Record<string, unknown>
+    seq += 1
+    out.push({
+      id: String(r.id ?? `nat-${stdCode}-${seq}`),
+      standardId: stdCode,
+      indexName: String(r.specific_indicator_value ?? r.index_name ?? r.name ?? '-'),
+      indexValue: String(r.specific_indicator_value ?? r.index_context ?? r.value ?? '-'),
+      singleResult: r.single_result != null ? String(r.single_result) : undefined,
+      matchStatus: r.match_status != null ? String(r.match_status) : undefined,
+    })
+  }
+  return out
+}
+
+function enterpriseRowsToIndexItems(s4: Step4IndicatorsOut): NationalIndexItem[] {
+  const out: NationalIndexItem[] = []
+  let seq = 0
+  const ent = Array.isArray(s4.enterprise_indicators) ? s4.enterprise_indicators : []
+  for (const raw of ent) {
+    const r = raw as Record<string, unknown>
+    seq += 1
+    out.push({
+      id: String(r.id ?? `ent-${seq}`),
+      standardId: s4.qb_code || 'enterprise',
+      indexName: String(r.name ?? r.indicator_name ?? '-'),
+      indexValue: String(r.value ?? r.indicator_value ?? r.specific_indicator_value ?? '-'),
+    })
+  }
+  return out
+}
+
+/**
+ * 仅从 `GET .../step/4/indicators` 组装旧/现行指标基线（不写前端模拟指标）。
+ * 第五步编排请使用 `ensureStep4IndicatorsForCompare`。
+ */
+export async function loadStep4IndicatorBundleView(
+  taskId: number,
+  referenceStdCodes: string[],
+): Promise<Step4IndicatorBundleView> {
+  const task = await getEvaluation(taskId)
+  if (task.current_step < 4) {
+    throw new Error('请先完成「引用标准有效性与更替确认」并提交审核 3，再进入技术指标对比。')
+  }
+  const s4 = await getStep4Indicators(taskId)
+  const pairs: ComparePairIn[] = referenceStdCodes
+    .filter((code) => code.trim())
+    .map((code) => ({ publication_std_code: code.trim(), latest_std_code: code.trim() }))
+  return buildIndicatorBundleFromS4(s4, pairs)
+}
+
+/**
+ * 第五步：`POST .../step/4/indicators/ensure`，按 ③ 可对比标准两列标准号编排指标。
+ */
+export async function ensureStep4IndicatorsForCompare(
+  taskId: number,
+  comparePairs: ComparePairIn[],
+): Promise<Step4IndicatorEnsureView> {
+  const task = await getEvaluation(taskId)
+  if (task.current_step < 4) {
+    throw new Error('请先完成「引用标准有效性与更替确认」并提交审核 3，再进入技术指标对比。')
+  }
+  if (comparePairs.length === 0) {
+    throw new Error('暂无可进行指标对比的标准，请先在第四步补全 GB 引用或补充标准。')
+  }
+  const out: Step4IndicatorsEnsureOut = await postStep4IndicatorsEnsure(taskId, {
+    compare_pairs: comparePairs,
+  })
+  const bundle = buildIndicatorBundleFromS4(out, comparePairs)
+  return {
+    ...bundle,
+    allReady: Boolean(out.all_ready),
+    stdStatuses: Array.isArray(out.std_statuses) ? out.std_statuses : [],
+  }
+}
+
+export { uploadNationalStandard }
+
+export async function fetchNationalIndicatorDetail(
+  taskId: number,
+  stdCode: string,
+  cachedRows?: unknown[],
+) {
+  try {
+    return await getNationalIndicatorsByStd(taskId, stdCode)
+  } catch {
+    if (cachedRows) {
+      return {
+        std_code: stdCode,
+        std_name: null,
+        rows: cachedRows.map((raw, i) => {
+          const r = raw as Record<string, unknown>
+          return {
+            id: Number(r.id ?? i + 1),
+            std_code: stdCode,
+            specific_indicator_value: String(r.specific_indicator_value ?? ''),
+            manual_review_status:
+              (r.manual_review_status as 'pending' | 'approved' | 'rejected' | null) ?? null,
+          }
+        }),
+      }
+    }
+    throw new Error('无法加载国标指标明细，请确认后端已实现 GET national-indicators 接口')
+  }
+}
+
+export async function reviewNationalIndicatorForStd(
+  taskId: number,
+  stdCode: string,
+  status: 'approved' | 'rejected',
+) {
+  return postNationalIndicatorReview(taskId, stdCode, { manual_review_status: status })
+}
+
+export async function saveNationalIndicatorIndexes(
+  taskId: number,
+  stdCode: string,
+  specificIndicatorValue: string,
+) {
+  return putNationalIndicatorSave(taskId, {
+    std_code: stdCode.trim(),
+    specific_indicator_value: specificIndicatorValue,
+  })
+}
+
+export type BackendStep5ComparisonResult = {
+  compareResult: Record<string, unknown>
+  rows: ComparePreviewRow[]
+  task: ComplianceTaskOut
+}
+
+/**
+ * 审核 4 确认（若仍在步骤 4）→ `POST/GET .../step/5/compare`（Dify③）→ 解析为表格行。
+ * @param comparePairs 与 ③ 表格一致；POST 时传给后端先刷新 bundle 再对比，失败则回退 GET。
+ */
+export async function runBackendStep5Comparison(
+  taskId: number,
+  comparePairs?: ComparePairIn[],
+): Promise<BackendStep5ComparisonResult> {
+  let task = await getEvaluation(taskId)
+  if (task.current_step < 4) {
+    throw new Error('请先完成审核 3 后再构建技术指标对比。')
+  }
+  if (task.current_step === 4) {
+    task = await confirmStep4(taskId)
+  }
+  if (task.current_step < 5) {
+    throw new Error(`服务端未进入步骤 5（当前 current_step=${task.current_step}），无法拉取对比结果。`)
+  }
+  let out: Awaited<ReturnType<typeof getStep5Compare>>
+  if (comparePairs && comparePairs.length > 0) {
+    try {
+      out = await postStep5Compare(taskId, { compare_pairs: comparePairs })
+    } catch {
+      out = await getStep5Compare(taskId)
+    }
+  } else {
+    out = await getStep5Compare(taskId)
+  }
+  const compareResult = (out.compare_result ?? {}) as Record<string, unknown>
+  const rows = parseStep5CompareResultToRows(compareResult)
+  return { compareResult, rows, task }
+}
+
+/** @deprecated 请使用 `syncEvaluationStep3Supplements`；保留兼容旧调用 */
 export const saveReferenceMapping = async (payload: SaveMappingPayload) => {
   const id = getComplianceEvaluationTaskId()
   if (id == null) {
     throw new Error('请先创建/选择评价任务')
   }
-  try {
-    await postStep3Supplements(id, {
-      rows: [{ latest_std_code: payload.national_bz_id.trim() }],
-    })
-  } catch {
-    // 映射在新后端中由 supplements 近似；失败时仍让前端流程继续
+  const code = payload.national_bz_id.trim()
+  if (!code) {
+    throw new Error('最新标准号不能为空')
   }
+  await syncEvaluationStep3Supplements(id, [code])
   return okAxios({ ok: true })
 }
 

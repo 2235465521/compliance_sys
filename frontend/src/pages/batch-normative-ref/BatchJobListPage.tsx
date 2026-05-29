@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Card, Popconfirm, Space, Table, Typography, Upload, message } from 'antd'
-import { InboxOutlined, LinkOutlined } from '@ant-design/icons'
+import type { UploadFile } from 'antd/es/upload/interface'
+import { InboxOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { Link, useNavigate } from 'react-router-dom'
 import type { BatchNormativeRefJobSummary } from '@/types/batch-normative-ref'
@@ -14,6 +15,7 @@ import {
   getLastBatchNormativeRefJobId,
   rememberLastBatchNormativeRefJobId,
 } from '@/pages/batch-normative-ref/session'
+import PendingUploadFileList from '@/pages/batch-normative-ref/components/PendingUploadFileList'
 import {
   commitBatchLabelAfterSuccessfulCreate,
   getLabelForNextCreate,
@@ -23,7 +25,7 @@ const { Title, Text } = Typography
 
 export default function BatchJobListPage() {
   const navigate = useNavigate()
-  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [pendingFileList, setPendingFileList] = useState<UploadFile[]>([])
   const [creating, setCreating] = useState(false)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -54,18 +56,21 @@ export default function BatchJobListPage() {
   }, [loadList])
 
   const handleCreate = async () => {
-    if (pendingFiles.length === 0) {
+    const files = pendingFileList
+      .map((f) => f.originFileObj)
+      .filter((f): f is File => f instanceof File)
+    if (files.length === 0) {
       message.warning('请至少选择一个企标文件')
       return
     }
     const label = getLabelForNextCreate()
     setCreating(true)
     try {
-      const job = await createBatchNormativeRefJob(pendingFiles, label)
+      const job = await createBatchNormativeRefJob(files, label)
       commitBatchLabelAfterSuccessfulCreate()
       rememberLastBatchNormativeRefJobId(job.id)
       message.success(`已创建批量任务（${label}）`)
-      setPendingFiles([])
+      setPendingFileList([])
       void loadList()
       navigate(`/batch-normative-reference/${job.id}`)
     } catch (e) {
@@ -163,12 +168,21 @@ export default function BatchJobListPage() {
           </Text>
           <Upload.Dragger
             multiple
-            fileList={[]}
+            fileList={pendingFileList}
+            showUploadList={false}
             beforeUpload={(file) => {
-              setPendingFiles((prev) => [...prev, file as File])
+              setPendingFileList((prev) => [
+                ...prev,
+                {
+                  uid: `pending-${file.uid}-${prev.length}-${Date.now()}`,
+                  name: file.name,
+                  size: file.size,
+                  status: 'done',
+                  originFileObj: file,
+                },
+              ])
               return false
             }}
-            showUploadList={false}
           >
             <p className="ant-upload-drag-icon">
               <InboxOutlined />
@@ -180,17 +194,11 @@ export default function BatchJobListPage() {
               支持多文件；字段名与后端约定为 files。
             </p>
           </Upload.Dragger>
-          {pendingFiles.length > 0 ? (
-            <Space wrap align="center">
-              <Text style={{ fontSize: 15 }}>已选 {pendingFiles.length} 个文件：</Text>
-              {pendingFiles.map((f) => (
-                <Text key={`${f.name}-${f.size}`} code style={{ fontSize: 14 }}>
-                  {f.name}
-                </Text>
-              ))}
-              <Button onClick={() => setPendingFiles([])}>清空</Button>
-            </Space>
-          ) : null}
+          <PendingUploadFileList
+            files={pendingFileList}
+            onRemove={(uid) => setPendingFileList((prev) => prev.filter((f) => f.uid !== uid))}
+            onClearAll={() => setPendingFileList([])}
+          />
           <Button type="primary" size="large" loading={creating} onClick={() => void handleCreate()}>
             创建批量任务并上传
           </Button>
@@ -198,13 +206,6 @@ export default function BatchJobListPage() {
       </Card>
 
       <Card title="批次列表" size="small">
-        {lastId && !listHint ? (
-          <div style={{ marginBottom: 12, fontSize: 15 }}>
-            <Link to={`/batch-normative-reference/${lastId}`}>
-              <LinkOutlined /> 进入最近一次创建的任务 #{lastId}
-            </Link>
-          </div>
-        ) : null}
         <Table<BatchNormativeRefJobSummary>
           rowKey="id"
           size="middle"
