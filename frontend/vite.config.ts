@@ -19,6 +19,9 @@ export default defineConfig({
       '/api': {
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
+        // 监控汇总等接口可能较慢；避免代理过早断开导致 socket hang up
+        timeout: 120_000,
+        proxyTimeout: 120_000,
       },
     },
   },

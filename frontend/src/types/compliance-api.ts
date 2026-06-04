@@ -11,6 +11,11 @@ export interface ComplianceTaskOut {
   has_parse_result: boolean
   parse_status: ParseStatus
   parse_error: string | null
+  /** 后端扩展：是否已有 step5 对比快照（见过程控制需求文档） */
+  has_compare_result?: boolean
+  compare_result_updated_at?: string | null
+  enterprise_name?: string | null
+  updated_at?: string | null
 }
 
 export interface ModuleMetaOut {

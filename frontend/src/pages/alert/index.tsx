@@ -6,26 +6,34 @@ import { MonitorTab } from '@/pages/alert/components/MonitorTab'
 import { ReverseTab } from '@/pages/alert/components/ReverseTab'
 import { mapMonitorSummaryFromApi } from '@/pages/alert/utils/mapWarningsApi'
 import { fetchMonitorSummary } from '@/services/warnings-api'
+import type { MonitorSummary } from '@/types/warnings'
 
 const { Title, Text } = Typography
 
 export default function AlertPage() {
   const [activeTab, setActiveTab] = useState('forward-alert')
-  const [needAttentionCount, setNeedAttentionCount] = useState(0)
+  const [monitorSummary, setMonitorSummary] = useState<MonitorSummary | null>(null)
+  const [monitorSummaryLoading, setMonitorSummaryLoading] = useState(false)
   const [monitorFocusNonce, setMonitorFocusNonce] = useState(0)
 
-  const refreshBellCount = useCallback(async () => {
+  const needAttentionCount = monitorSummary?.needAttentionCount ?? 0
+
+  /** 页头铃铛与监控 Tab 共用一次汇总请求，避免重复打 /monitor/summary/ */
+  const refreshMonitorSummary = useCallback(async () => {
+    setMonitorSummaryLoading(true)
     try {
       const api = await fetchMonitorSummary()
-      setNeedAttentionCount(mapMonitorSummaryFromApi(api).needAttentionCount)
+      setMonitorSummary(mapMonitorSummaryFromApi(api))
     } catch {
-      /* 汇总接口未就绪时保持上次数量或 0 */
+      /* 汇总接口未就绪时保持上次数据 */
+    } finally {
+      setMonitorSummaryLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    void refreshBellCount()
-  }, [refreshBellCount])
+    void refreshMonitorSummary()
+  }, [refreshMonitorSummary])
 
   const openMonitorNeedAttention = () => {
     setActiveTab('monitor')
@@ -130,6 +138,7 @@ export default function AlertPage() {
           <Tabs
             activeKey={activeTab}
             onChange={setActiveTab}
+            destroyOnHidden
             tabBarStyle={{ marginBottom: 16, fontWeight: 500 }}
             items={[
               { key: 'forward-alert', label: '正向预警', children: <ForwardTab /> },
@@ -140,7 +149,10 @@ export default function AlertPage() {
                 children: (
                   <MonitorTab
                     focusNeedAttentionNonce={monitorFocusNonce}
-                    onSummaryUpdated={(s) => setNeedAttentionCount(s.needAttentionCount)}
+                    summary={monitorSummary}
+                    summaryLoading={monitorSummaryLoading}
+                    onRefreshSummary={refreshMonitorSummary}
+                    onSummaryChange={setMonitorSummary}
                   />
                 ),
               },

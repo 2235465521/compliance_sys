@@ -128,16 +128,20 @@
 ```json
 {
   "last_scan_at": "2026-05-23T10:00:00Z",
-  "total_evaluated_qb": 120,
-  "need_attention_count": 8,
-  "all_ok_count": 112,
-  "pending_count": 0
+  "total_evaluated_qb": 1450,
+  "need_attention_count": 2,
+  "all_ok_count": 660,
+  "no_eval_record_count": 47,
+  "not_scanned_count": 741,
+  "pending_count": 741
 }
 ```
 
+四类计数之和等于 `total_evaluated_qb`：`need_attention_count` + `all_ok_count`（含 partial）+ `no_eval_record_count` + `not_scanned_count`。`pending_count` 兼容字段，等于 `not_scanned_count`。
+
 ### 5.2 `GET /warnings/monitor/enterprises/`
 
-**Query**：`page`, `page_size`, `keyword`, `status`（`need_attention` | `all_ok` | `all`）
+**Query**：`page`, `page_size`, `keyword`, `status`（`need_attention` | `all_ok` | `no_eval_record` | `not_scanned` | `all`）
 
 ```json
 {

@@ -47,6 +47,11 @@ export async function getEvaluation(taskId: number): Promise<ComplianceTaskOut> 
   return data
 }
 
+/** 删除评价任务（未完成草稿）；见 docs/backend-compliance-过程控制与草稿-后端需求说明.md §4.3 */
+export async function deleteEvaluation(taskId: number): Promise<void> {
+  await complianceClient.delete(`/evaluations/${taskId}`)
+}
+
 export async function uploadEvaluationFile(taskId: number, file: File): Promise<ComplianceTaskOut> {
   const form = new FormData()
   form.append('file', file)
@@ -196,6 +201,26 @@ export async function getStep5Compare(taskId: number): Promise<Step5CompareOut> 
     `/evaluations/${taskId}/step/5/compare`,
   )
   return data
+}
+
+/**
+ * 只读已保存的对比结果（不触发 Dify③）。
+ * 后端未实现时返回 null，由调用方降级。
+ */
+export async function getStep5CompareResult(taskId: number): Promise<Step5CompareOut | null> {
+  try {
+    const { data } = await complianceClient.get<Step5CompareOut>(
+      `/evaluations/${taskId}/step/5/compare/result`,
+    )
+    return data
+  } catch (e: unknown) {
+    const status =
+      e && typeof e === 'object' && 'response' in e
+        ? (e as { response?: { status?: number } }).response?.status
+        : undefined
+    if (status === 404 || status === 405) return null
+    throw e
+  }
 }
 
 /** 构建对比：可选带 compare_pairs 先刷新编排再调 Dify③；失败时由调用方回退 GET */

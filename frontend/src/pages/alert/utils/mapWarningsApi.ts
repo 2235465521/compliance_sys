@@ -7,6 +7,7 @@ import type {
 } from '@/types/warnings-api'
 import type {
   ForwardWarningResult,
+  MonitorActiveScan,
   MonitorEnterpriseItem,
   MonitorSummary,
   ReverseAffectedEnterprise,
@@ -14,7 +15,11 @@ import type {
   WarningCompareRow,
   WarningTaskConclusion,
 } from '@/types/warnings'
-import type { MonitorEnterpriseListItemApi, MonitorSummaryApi } from '@/types/warnings-api'
+import type {
+  MonitorEnterpriseListItemApi,
+  MonitorSummaryApi,
+  WarningsActiveScanApi,
+} from '@/types/warnings-api'
 
 const ROW_CONCLUSIONS: NoveltyRowConclusion[] = [
   'unchanged',
@@ -183,22 +188,65 @@ export function mapReverseWarningFromApi(
   }
 }
 
+function mapActiveScanFromApi(api: WarningsActiveScanApi): MonitorActiveScan {
+  return {
+    jobId: String(api.job_id),
+    status: api.status,
+    processedCount: api.processed_count ?? 0,
+    totalCount: api.total_count ?? 0,
+    currentQbCode: api.current_qb_code ?? null,
+    phase: api.phase ?? null,
+    pauseRequested: api.pause_requested,
+    notScannedCount: api.not_scanned_count ?? 0,
+    needAttentionCount: api.need_attention_count ?? 0,
+    allOkCount: api.all_ok_count ?? 0,
+    noEvalRecordCount: api.no_eval_record_count ?? 0,
+  }
+}
+
 export function mapMonitorSummaryFromApi(api: MonitorSummaryApi): MonitorSummary {
+  const notScanned = api.not_scanned_count ?? api.pending_count ?? 0
   return {
     lastScanAt: api.last_scan_at ?? undefined,
     totalEvaluatedQb: api.total_evaluated_qb ?? 0,
     needAttentionCount: api.need_attention_count ?? 0,
     allOkCount: api.all_ok_count ?? 0,
-    pendingCount: api.pending_count ?? 0,
+    noEvalRecordCount: api.no_eval_record_count ?? 0,
+    notScannedCount: notScanned,
+    activeScan: api.active_scan ? mapActiveScanFromApi(api.active_scan) : null,
+  }
+}
+
+function resolveMonitorStatus(
+  item: MonitorEnterpriseListItemApi,
+): MonitorEnterpriseItem['monitorStatus'] {
+  if (item.monitor_status) return item.monitor_status
+  switch (item.task_conclusion) {
+    case 'no_eval_record':
+    case 'empty_history':
+      return 'no_eval_record'
+    case 'not_scanned':
+    case 'pending':
+      return 'not_scanned'
+    case 'partial':
+      return 'partial'
+    case 'all_ok':
+      return 'all_ok'
+    case 'need_attention':
+      return 'need_attention'
+    default:
+      return 'not_scanned'
   }
 }
 
 export function mapMonitorEnterpriseItemFromApi(
   item: MonitorEnterpriseListItemApi,
 ): MonitorEnterpriseItem {
+  const monitorStatus = resolveMonitorStatus(item)
   return {
     qbCode: item.qb_code?.trim() || '—',
     enterpriseName: item.enterprise_name?.trim() || undefined,
+    monitorStatus,
     taskConclusion: (item.task_conclusion ?? 'partial') as WarningTaskConclusion,
     taskSummary: item.task_summary?.trim() || undefined,
     lastCheckedAt: item.last_checked_at ?? undefined,

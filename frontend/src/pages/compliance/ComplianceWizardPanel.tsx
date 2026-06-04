@@ -1,4 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Alert,
   Button,
@@ -36,6 +37,7 @@ import {
   getComplianceEvaluationTaskId,
   ensureStep4IndicatorsForCompare,
   runBackendStep5Comparison,
+  setComplianceEvaluationTaskId,
   uploadNationalStandard,
   getNationalIndexes,
   getPendingIndexes,
@@ -70,6 +72,21 @@ import {
 import { ReferenceLatestResolvedTable } from '@/pages/compliance/components/ReferenceLatestResolvedTable'
 import { TechnicalComparisonStep } from '@/pages/compliance/components/TechnicalComparisonStep'
 import type { ComparePreviewRow } from '@/pages/compliance/comparison-types'
+import { loadWizardDraft, saveWizardDraft } from '@/pages/compliance/utils/complianceWizardDraft'
+import {
+  isCompareAuditSatisfied,
+  isDescriptiveAuditSatisfied,
+  isExtractAuditSatisfied,
+  isStep3RowPendingAudit,
+  isValidityAuditSatisfied,
+  markStep3RowsApprovedIfNeeded,
+} from '@/pages/compliance/utils/complianceWizardAuditSync'
+import {
+  hydrateDescriptiveFromStep1,
+  hydrateStep3Tables,
+  hydrateStep4ValidityRows,
+  hydrateStep5Compare,
+} from '@/pages/compliance/utils/complianceWizardHydrate'
 
 export type { ComparePreviewRow } from '@/pages/compliance/comparison-types'
 
@@ -110,6 +127,8 @@ export type WizardProgressSnapshot = {
 }
 
 export type ComplianceWizardPanelProps = {
+  /** 路由传入时绑定评价任务（并写入 localStorage） */
+  taskId?: number
   onProgressSnapshot?: (snapshot: WizardProgressSnapshot) => void
   afterUploadSuccess?: () => void
 }
@@ -384,7 +403,7 @@ const extractDescriptiveInfoFromPayload = (input: unknown) => {
 }
 
 const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, ComplianceWizardPanelProps>(
-  function ComplianceWizardPanel({ onProgressSnapshot, afterUploadSuccess }, ref) {
+  function ComplianceWizardPanel({ taskId: taskIdProp, onProgressSnapshot, afterUploadSuccess }, ref) {
     const rootRef = React.useRef<HTMLDivElement | null>(null)
     const [messageApi, contextHolder] = message.useMessage()
     const [current, setCurrent] = useState(0)
@@ -425,6 +444,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const [validityLoading, setValidityLoading] = useState(false)
     const [wizardNextLoading, setWizardNextLoading] = useState(false)
     const [backendMaxWizardIndex, setBackendMaxWizardIndex] = useState(0)
+    /** 与 GET evaluations/{id} 的 current_step 同步，用于第6步检查清单（避免仅依赖本地 UI 态） */
+    const [serverConfirmedStep, setServerConfirmedStep] = useState(1)
     const [latestStandardRows, setLatestStandardRows] = useState<StandardLatestCheckResult[]>([])
     const [validityEditingId, setValidityEditingId] = useState<string | null>(null)
     const [validityDraft, setValidityDraft] = useState<StandardLatestCheckResult | null>(null)
@@ -576,18 +597,137 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
     useEffect(() => () => clearPendingPollTimer(), [])
 
+    const applyServerConfirmedAuditFlags = (currentStep: number) => {
+      setServerConfirmedStep(currentStep)
+      if (currentStep >= 2) {
+        setDescriptiveReview((prev) =>
+          prev.decision === 'pending'
+            ? {
+                ...prev,
+                decision: 'approve',
+                updatedAt: formatAuditTime(new Date()),
+              }
+            : prev,
+        )
+      }
+      if (currentStep >= 4) {
+        setValidityReviewDecision('complete')
+      }
+      if (currentStep >= 6) {
+        setComparisonAuditPassed(true)
+      }
+    }
+
     /** 从后端刷新「可进入的最大向导步」，与 Steps 禁用态、刷新后落点一致 */
     const refreshBackendStepPolicy = async () => {
       const tid = getComplianceEvaluationTaskId()
       if (tid == null) {
         setBackendMaxWizardIndex(0)
+        setServerConfirmedStep(1)
         return
       }
       try {
         const ev = await getEvaluation(tid)
         setBackendMaxWizardIndex(backendCurrentStepToMaxWizardIndex(ev.current_step))
+        applyServerConfirmedAuditFlags(ev.current_step)
       } catch {
         setBackendMaxWizardIndex(0)
+        setServerConfirmedStep(1)
+      }
+    }
+
+    const applyStep5Hydrate = async (tid: number): Promise<boolean> => {
+      try {
+        const hydrated = await hydrateStep5Compare(tid)
+        if (!hydrated) {
+          setComparePreview([])
+          setCompareLoadedFromBackend(false)
+          return false
+        }
+        setComparePreview(hydrated.rows)
+        setCompareBackendSummary(hydrated.summary)
+        setCompareLoadedFromBackend(true)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const hydrateWizardStep = async (stepIndex: number) => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return
+      try {
+        if (stepIndex === 1) {
+          const { bzId, enterpriseName } = await hydrateDescriptiveFromStep1(tid)
+          setDescriptiveReview((prev) => ({
+            ...prev,
+            bzId: prev.bzId.trim() || bzId,
+            enterpriseName: prev.enterpriseName.trim() || enterpriseName,
+          }))
+        }
+        if (stepIndex === 2) {
+          const tables = await hydrateStep3Tables()
+          const serverStep =
+            (await getEvaluation(tid).catch(() => null))?.current_step ?? serverConfirmedStep
+          const pending = markStep3RowsApprovedIfNeeded(tables.pendingRows, serverStep)
+          const refs = markStep3RowsApprovedIfNeeded(tables.referenceRows, serverStep)
+          setPendingRows((prev) => mergeAuditStatusPreserve(prev, pending, 'enterprise'))
+          setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refs, 'reference'))
+        }
+        if (stepIndex === 3) {
+          let refs = referenceRows
+          if (refs.length === 0) {
+            const tables = await hydrateStep3Tables()
+            const serverStep =
+              (await getEvaluation(tid).catch(() => null))?.current_step ?? serverConfirmedStep
+            const pending = markStep3RowsApprovedIfNeeded(tables.pendingRows, serverStep)
+            const refRows = markStep3RowsApprovedIfNeeded(tables.referenceRows, serverStep)
+            setPendingRows((prev) => mergeAuditStatusPreserve(prev, pending, 'enterprise'))
+            setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refRows, 'reference'))
+            refs = refRows
+          }
+          if (latestStandardRows.length === 0 && refs.length > 0) {
+            const results = await hydrateStep4ValidityRows(refs)
+            setLatestStandardRows(results)
+          }
+        }
+        if (stepIndex === 4) {
+          await applyStep5Hydrate(tid)
+        }
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+      }
+    }
+
+    const navigateToWizardStep = async (next: number): Promise<boolean> => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        if (next > 0) {
+          messageApi.warning('请先完成上传以创建并绑定评价任务。')
+          return false
+        }
+        setBackendMaxWizardIndex(0)
+        setCurrent(0)
+        return true
+      }
+      try {
+        const ev = await getEvaluation(tid)
+        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
+        setBackendMaxWizardIndex(maxIdx)
+        applyServerConfirmedAuditFlags(ev.current_step)
+        if (next > maxIdx) {
+          messageApi.warning(
+            `后端当前为步骤 ${ev.current_step}，无法跳转到第 ${next + 1} 步。请先完成前置确认（以服务端 current_step 为准）。`,
+          )
+          return false
+        }
+        if (next === current) return true
+        setCurrent(next)
+        await hydrateWizardStep(next)
+        return true
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+        return false
       }
     }
 
@@ -611,6 +751,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
         setBackendMaxWizardIndex(maxIdx)
         setCurrent(maxIdx)
+        applyServerConfirmedAuditFlags(ev.current_step)
 
         const qb = ev.qb_code?.trim() ?? ''
         if (qb) {
@@ -620,13 +761,23 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           setDescriptiveReview((prev) => ({ ...prev, bzId: prev.bzId.trim() ? prev.bzId : qb }))
         }
 
-        setComparePreview([])
         setOldReferenceIndexRows([])
         setLatestReferenceIndexRows([])
         setSavedMappingIds(new Set())
         setLatestStandardRows([])
         setValidityEditingId(null)
         setValidityDraft(null)
+
+        const draft = loadWizardDraft(tid)
+        const draftSummary = draft?.summaryDraft
+        if (draftSummary) {
+          setSummaryDraft((prev) => ({
+            ...prev,
+            descriptive: draftSummary.descriptive || prev.descriptive,
+            validity: draftSummary.validity || prev.validity,
+            technical: draftSummary.technical || prev.technical,
+          }))
+        }
 
         const postedCodes = loadPostedSupplementStdCodes(tid)
         postedSupplementStdCodesRef.current = new Set(postedCodes)
@@ -641,9 +792,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         } else {
           setValidityReviewDecision('pending')
         }
+
         if (ev.current_step >= 5) {
-          setComparisonAuditPassed(true)
+          const hydratedOk = await applyStep5Hydrate(tid)
+          setComparisonAuditPassed(ev.current_step >= 6 || hydratedOk)
         } else {
+          setComparePreview([])
+          setCompareLoadedFromBackend(false)
           setComparisonAuditPassed(false)
         }
 
@@ -652,13 +807,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           try {
             const response = await getPendingIndexes()
             if (reqId !== bootstrapRequestIdRef.current) return
-            setPendingRows(response.data)
-            if ('referenceExtracts' in response) {
-              setReferenceRows(response.referenceExtracts ?? [])
-            } else {
-              setReferenceRows([])
-            }
-            const refs = 'referenceExtracts' in response ? (response.referenceExtracts ?? []) : []
+            const pendingMarked = markStep3RowsApprovedIfNeeded(response.data, ev.current_step)
+            const refsRaw =
+              'referenceExtracts' in response ? (response.referenceExtracts ?? []) : []
+            const refsMarked = markStep3RowsApprovedIfNeeded(refsRaw, ev.current_step)
+            setPendingRows(pendingMarked)
+            setReferenceRows(refsMarked)
+            const refs = refsMarked
             const uniq = Array.from(
               new Set(refs.map((r) => r.standardName.trim()).filter((name) => name.length > 0 && name !== '-')),
             )
@@ -679,6 +834,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           setPendingRows([])
           setReferenceRows([])
         }
+
+        await hydrateWizardStep(maxIdx)
       } catch {
         if (reqId !== bootstrapRequestIdRef.current) return
         setBackendMaxWizardIndex(0)
@@ -688,6 +845,12 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     }
 
     runWizardBootstrapSyncRef.current = runWizardBootstrapSync
+
+    useEffect(() => {
+      if (taskIdProp != null && Number.isFinite(taskIdProp)) {
+        setComplianceEvaluationTaskId(taskIdProp)
+      }
+    }, [taskIdProp])
 
     useEffect(() => {
       void runWizardBootstrapSyncRef.current()
@@ -1572,8 +1735,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                 messageApi.warning('请先点击「构建对比预览」拉取服务端对比结果。')
                 return
               }
-              if (!comparisonAuditPassed || ev.current_step < 6) {
-                messageApi.warning('请先点击「人工审核通过」以提交服务端审核 5，再进入总结步骤。')
+              if (ev.current_step < 6 && (!comparisonAuditPassed || !compareLoadedFromBackend)) {
+                messageApi.warning('请先点击「构建对比预览」并「人工审核通过」提交服务端审核 5，再进入总结步骤。')
                 return
               }
             } catch (error) {
@@ -1590,34 +1753,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     }
 
     /** 顶部 Steps 与后端 `current_step` 对齐，禁止未 confirm 即跳步（接入流程指南 §1.1） */
-    const onWizardStepsChange = async (next: number): Promise<boolean> => {
-      const tid = getComplianceEvaluationTaskId()
-      if (tid == null) {
-        if (next > 0) {
-          messageApi.warning('请先完成上传以创建并绑定评价任务。')
-          return false
-        }
-        setBackendMaxWizardIndex(0)
-        setCurrent(0)
-        return true
-      }
-      try {
-        const ev = await getEvaluation(tid)
-        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
-        setBackendMaxWizardIndex(maxIdx)
-        if (next > maxIdx) {
-          messageApi.warning(
-            `后端当前为步骤 ${ev.current_step}，无法跳转到第 ${next + 1} 步。请先完成前置确认（以服务端 current_step 为准）。`,
-          )
-          return false
-        }
-        setCurrent(next)
-        return true
-      } catch (error) {
-        messageApi.error(getComplianceApiErrorMessage(error))
-        return false
-      }
-    }
+    const onWizardStepsChange = (next: number) => navigateToWizardStep(next)
 
     const startEditComparisonRow = (row: ComparePreviewRow) => {
       setComparisonEditingId(row.id)
@@ -1673,6 +1809,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       try {
         setComparisonLoading(true)
         await confirmEvaluationAuditStep5(tid)
+        const evAfter = await getEvaluation(tid)
+        applyServerConfirmedAuditFlags(evAfter.current_step)
         setComparisonAuditPassed(true)
         const summaryText =
           compareBackendSummary.trim() ||
@@ -1681,7 +1819,9 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           ...prev,
           technical: prev.technical.trim() || summaryText,
         }))
-        messageApi.success('已提交服务端审核 5，技术指标对比已确认')
+        messageApi.success(
+          '已提交服务端审核 5。任务已记入「已完成的评价」，可从任务列表对应页签查看。',
+        )
         void refreshBackendStepPolicy()
       } catch (error) {
         messageApi.error(getComplianceApiErrorMessage(error))
@@ -1749,7 +1889,10 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
       try {
         setComparisonLoading(true)
-        setComparisonAuditPassed(false)
+        const evBefore = await getEvaluation(tid)
+        if (evBefore.current_step < 6) {
+          setComparisonAuditPassed(false)
+        }
         setCompareLoadedFromBackend(false)
 
         const view = await ensureStep4IndicatorsForCompare(tid, step5ComparePairs)
@@ -1797,8 +1940,6 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         setStep5NationalByStdCode({})
         setParsingStdCodes([])
         setIndicatorsAllReady(false)
-        setCompareBackendSummary('')
-        setCompareLoadedFromBackend(false)
         return
       }
       let cancelled = false
@@ -1880,14 +2021,17 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     }
 
     const saveDraft = () => {
-      const draft = {
-        bzId: latestUploadedBzId,
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        messageApi.warning('请先创建或选择评价任务后再保存草稿')
+        return
+      }
+      saveWizardDraft({
+        taskId: tid,
         summaryDraft,
         current,
-        updatedAt: new Date().toISOString(),
-      }
-      localStorage.setItem('compliance-wizard-draft', JSON.stringify(draft))
-      messageApi.success('已保存向导草稿')
+      })
+      messageApi.success('已保存向导草稿（本机）')
     }
 
     const referenceColumns: ColumnsType<PendingIndexItem> = [
@@ -2126,23 +2270,21 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const step3ManualAuditSummary = useMemo(() => {
       const allRows = [...referenceRows, ...pendingRows]
       const total = allRows.length
-      const pending = allRows.filter((row) => {
-        const text = row.statusText || ''
-        return text.includes('待') || text.includes('解析') || text.includes('确认')
-      }).length
+      const pending = allRows.filter((row) => isStep3RowPendingAudit(row.statusText)).length
+      const localRowsAllApproved = total > 0 && pending === 0
       return {
         total,
         pending,
-        completed: total > 0 && pending === 0,
+        completed: isExtractAuditSatisfied(serverConfirmedStep, localRowsAllApproved),
       }
-    }, [pendingRows, referenceRows])
+    }, [pendingRows, referenceRows, serverConfirmedStep])
 
     const reportChecklist = useMemo(
       () => [
         {
           key: 'step2Audit',
           label: '第2步人工审核已完成（描述性合规评价）',
-          ok: descriptiveReview.decision !== 'pending',
+          ok: isDescriptiveAuditSatisfied(serverConfirmedStep, descriptiveReview.decision),
           targetStep: 1,
           actionText: '去第2步处理',
         },
@@ -2156,14 +2298,18 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         {
           key: 'step4Audit',
           label: '第4步人工审核已完成（引用标准有效性与更替）',
-          ok: validitySummary.total > 0 && validityReviewDecision === 'complete',
+          ok: isValidityAuditSatisfied(
+            serverConfirmedStep,
+            validityReviewDecision === 'complete',
+            validitySummary.total,
+          ),
           targetStep: 3,
           actionText: '去第4步处理',
         },
         {
           key: 'step5Audit',
           label: '第5步人工审核已完成（指标映射与技术对比）',
-          ok: comparisonAuditPassed,
+          ok: isCompareAuditSatisfied(serverConfirmedStep, comparisonAuditPassed),
           targetStep: 4,
           actionText: '去第5步处理',
         },
@@ -2171,6 +2317,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       [
         comparisonAuditPassed,
         descriptiveReview.decision,
+        serverConfirmedStep,
         step3ManualAuditSummary.completed,
         validitySummary.total,
         validityReviewDecision,
@@ -2181,10 +2328,14 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const stepCompletion = useMemo(
       () => [
         referenceRows.length + pendingRows.length > 0 || latestUploadedBzIds.length > 0 || !!latestUploadedBzId,
-        descriptiveReview.decision !== 'pending',
+        isDescriptiveAuditSatisfied(serverConfirmedStep, descriptiveReview.decision),
         step3ManualAuditSummary.completed,
-        validitySummary.total > 0 && validityReviewDecision === 'complete',
-        comparisonAuditPassed,
+        isValidityAuditSatisfied(
+          serverConfirmedStep,
+          validityReviewDecision === 'complete',
+          validitySummary.total,
+        ),
+        isCompareAuditSatisfied(serverConfirmedStep, comparisonAuditPassed),
         reportReady,
       ],
       [
@@ -2195,6 +2346,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         pendingRows.length,
         referenceRows.length,
         reportReady,
+        serverConfirmedStep,
         step3ManualAuditSummary.completed,
         validityReviewDecision,
         validitySummary.total,
@@ -2207,6 +2359,42 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const [focusChecklistKey, setFocusChecklistKey] = useState('')
     const previousChecklistStateRef = React.useRef<Record<string, boolean> | null>(null)
     const previousPendingChecklistKeyRef = React.useRef<string | null>(null)
+
+    /** 进入第6步：按服务端 current_step 同步审核标记，并补齐展示用数据 */
+    useEffect(() => {
+      if (current !== 5) return
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return
+      let cancelled = false
+      void (async () => {
+        try {
+          const ev = await getEvaluation(tid)
+          if (cancelled) return
+          applyServerConfirmedAuditFlags(ev.current_step)
+          if (ev.current_step >= 4 && latestStandardRows.length === 0) {
+            const tables = await hydrateStep3Tables()
+            const refs = markStep3RowsApprovedIfNeeded(tables.referenceRows, ev.current_step)
+            if (cancelled) return
+            setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refs, 'reference'))
+            if (refs.length > 0) {
+              const results = await hydrateStep4ValidityRows(refs)
+              if (!cancelled) setLatestStandardRows(results)
+            }
+          }
+          if (ev.current_step >= 5) {
+            await applyStep5Hydrate(tid)
+          }
+        } catch (error) {
+          if (!cancelled) {
+            messageApi.error(getComplianceApiErrorMessage(error))
+          }
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 进入总结步时按 task 拉一次服务端态
+    }, [current])
 
     useEffect(() => {
       if (current !== 5) return
@@ -2413,6 +2601,17 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                               setDescriptiveReview((prev) => ({ ...prev, enterpriseName: event.target.value }))
                             }
                           />
+                          {getComplianceEvaluationTaskId() != null ? (
+                            <Link
+                              to={`/compliance/evaluations/${getComplianceEvaluationTaskId()}/document`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              查看当前评价企标正文（新窗口）
+                            </Link>
+                          ) : (
+                            <Text type="secondary">上传企标并创建任务后可查看正文对照</Text>
+                          )}
                           <div>
                             <Text type="secondary">是否合规</Text>
                             <div style={{ marginTop: 6 }}>
@@ -2777,6 +2976,14 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
               {current === 5 ? (
                 <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                  {serverConfirmedStep < 6 ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="本任务尚未记入「已完成的评价」"
+                      description="向导第 6 步仅用于总结与导出报告。请返回第 5 步，在「构建对比预览」后点击「人工审核通过」提交审核 5；成功后任务会出现在任务列表的「已完成的评价」页签中。"
+                    />
+                  ) : null}
                   <Alert
                     type="success"
                     showIcon
@@ -3045,7 +3252,12 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           <Row justify="space-between" align="middle" gutter={[12, 12]}>
             <Col>
               <Space wrap>
-                <Button disabled={current === 0} onClick={() => setCurrent((prev) => Math.max(0, prev - 1))}>
+                <Button
+                  disabled={current === 0}
+                  onClick={() => {
+                    if (current > 0) void navigateToWizardStep(current - 1)
+                  }}
+                >
                   上一步
                 </Button>
                 <Button

@@ -48,17 +48,48 @@ export interface ReverseWarningResult {
   enterprises: ReverseAffectedEnterprise[]
 }
 
+export interface MonitorActiveScan {
+  jobId: string
+  status: 'running' | 'paused'
+  processedCount: number
+  totalCount: number
+  currentQbCode: string | null
+  phase: string | null
+  pauseRequested?: boolean
+  notScannedCount: number
+  needAttentionCount: number
+  allOkCount: number
+  noEvalRecordCount: number
+}
+
 export interface MonitorSummary {
   lastScanAt?: string
   totalEvaluatedQb: number
   needAttentionCount: number
   allOkCount: number
-  pendingCount: number
+  noEvalRecordCount: number
+  notScannedCount: number
+  activeScan?: MonitorActiveScan | null
 }
+
+export type MonitorListStatus =
+  | 'all'
+  | 'need_attention'
+  | 'all_ok'
+  | 'no_eval_record'
+  | 'not_scanned'
+
+export type MonitorEnterpriseMonitorStatus =
+  | 'need_attention'
+  | 'all_ok'
+  | 'partial'
+  | 'no_eval_record'
+  | 'not_scanned'
 
 export interface MonitorEnterpriseItem {
   qbCode: string
   enterpriseName?: string
+  monitorStatus: MonitorEnterpriseMonitorStatus
   taskConclusion: WarningTaskConclusion
   taskSummary?: string
   lastCheckedAt?: string

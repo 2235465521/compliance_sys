@@ -22,6 +22,7 @@ import {
   confirmStep4,
   confirmStep5,
   createEvaluation,
+  deleteEvaluation,
   downloadArtifactFile,
   getEvaluation,
   getStep1,
@@ -29,6 +30,7 @@ import {
   getStep3ReferenceLatest,
   getStep4Indicators,
   getStep5Compare,
+  getStep5CompareResult,
   postStep5Compare,
   listArtifacts,
   listEvaluations,
@@ -55,18 +57,33 @@ export function getComplianceEvaluationTaskId(): number | null {
 
 /**
  * 后端 `current_step`（1～6）→ 向导 Steps **允许进入的最大下标**（0～5）。
+ * 与任务列表展示一致：`current_step === 1` 对应向导第 1 步（下标 0，企标上传）。
  * 与《前端接入流程指南》§1.1、手册 §1.5 一致：`next > maxIdx` 时禁止跳步。
  */
 export function backendCurrentStepToMaxWizardIndex(currentStep: number): number {
   if (!Number.isFinite(currentStep) || currentStep < 1) return 0
   if (currentStep >= 6) return 5
-  return Math.min(5, currentStep)
+  return Math.min(5, currentStep - 1)
+}
+
+/** 任务中心「评价历史」：后端已在第 5 步 confirm，current_step 推进到 6 */
+export function isComplianceEvaluationCompleted(task: { current_step: number }): boolean {
+  return task.current_step >= 6
 }
 
 export function setComplianceEvaluationTaskId(id: number) {
   localStorage.setItem(LS_EVAL_TASK, String(id))
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('compliance-evaluation-task-id-changed', { detail: { id } }))
+  }
+}
+
+export function clearComplianceEvaluationTaskId() {
+  localStorage.removeItem(LS_EVAL_TASK)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('compliance-evaluation-task-id-changed', { detail: { id: null } }),
+    )
   }
 }
 
@@ -537,7 +554,7 @@ function okAxios<T>(data: T): AxiosResponse<T> {
   }
 }
 
-function mapTaskOutToLegacy(item: import('@/types/compliance-api').ComplianceTaskOut, _index: number): ComplianceTask {
+export function mapEvaluationTaskOut(item: import('@/types/compliance-api').ComplianceTaskOut): ComplianceTask {
   const parseFailed = item.parse_status === 'failed'
   const done = item.current_step >= 6
   const status: ComplianceTask['status'] = parseFailed ? 'failed' : done ? 'completed' : 'processing'
@@ -545,7 +562,7 @@ function mapTaskOutToLegacy(item: import('@/types/compliance-api').ComplianceTas
   return {
     id: String(item.id),
     name: item.qb_code?.trim() || item.uploaded_file_name || `合规评价 #${item.id}`,
-    enterprise: item.uploaded_file_name || '-',
+    enterprise: item.enterprise_name?.trim() || item.uploaded_file_name || '-',
     status,
     progress,
     createTime: '',
@@ -755,14 +772,17 @@ async function ensureEvaluationTaskId(): Promise<number> {
 export const getComplianceTasks = async (): Promise<{ data: ComplianceTask[] }> => {
   try {
     const list = await listEvaluations()
-    const data = list.map(mapTaskOutToLegacy)
-    if (getComplianceEvaluationTaskId() == null && list.length > 0) {
-      setComplianceEvaluationTaskId(list[0].id)
-    }
+    const data = list.map(mapEvaluationTaskOut)
     return { data }
   } catch (e) {
     throw new Error(getComplianceApiErrorMessage(e))
   }
+}
+
+export async function startNewComplianceEvaluation(): Promise<ComplianceTaskOut> {
+  const raw = await createEvaluation()
+  setComplianceEvaluationTaskId(raw.id)
+  return raw
 }
 
 export const getComplianceTask = async (id: string): Promise<AxiosResponse<ComplianceTask>> => {
@@ -771,15 +791,14 @@ export const getComplianceTask = async (id: string): Promise<AxiosResponse<Compl
     throw new Error('无效的任务 id')
   }
   const raw = await getEvaluation(n)
-  return okAxios(mapTaskOutToLegacy(raw, 0))
+  return okAxios(mapEvaluationTaskOut(raw))
 }
 
 export const createComplianceTask = async (
   _payload: CreateComplianceTaskRequest,
 ): Promise<AxiosResponse<ComplianceTask>> => {
-  const raw = await createEvaluation()
-  setComplianceEvaluationTaskId(raw.id)
-  return okAxios(mapTaskOutToLegacy(raw, 0))
+  const raw = await startNewComplianceEvaluation()
+  return okAxios(mapEvaluationTaskOut(raw))
 }
 
 export const updateComplianceTask = async (
@@ -789,8 +808,19 @@ export const updateComplianceTask = async (
   return Promise.reject(new Error('新后端暂未提供任务更新接口'))
 }
 
-export const deleteComplianceTask = async (_id: string): Promise<void> => {
-  return Promise.reject(new Error('新后端暂未提供任务删除接口'))
+/** 删除评价任务；`taskId` 为数字 id。已完成（current_step>=6）任务前端不展示删除入口。 */
+export async function deleteComplianceEvaluationTask(taskId: number): Promise<void> {
+  await deleteEvaluation(taskId)
+  if (getComplianceEvaluationTaskId() === taskId) {
+    clearComplianceEvaluationTaskId()
+  }
+}
+
+/** @deprecated 请使用 `deleteComplianceEvaluationTask` */
+export const deleteComplianceTask = async (id: string): Promise<void> => {
+  const n = Number(id)
+  if (!Number.isFinite(n)) throw new Error('无效的任务 id')
+  await deleteComplianceEvaluationTask(n)
 }
 
 export const uploadEnterpriseStandard = async (file: File | File[], bzId?: string) => {
@@ -1265,6 +1295,35 @@ export type BackendStep5ComparisonResult = {
  * 审核 4 确认（若仍在步骤 4）→ `POST/GET .../step/5/compare`（Dify③）→ 解析为表格行。
  * @param comparePairs 与 ③ 表格一致；POST 时传给后端先刷新 bundle 再对比，失败则回退 GET。
  */
+function compareResultHasContent(compareResult: Record<string, unknown>): boolean {
+  const md = compareResult.markdown
+  if (typeof md === 'string' && md.trim().length > 0) return true
+  const details = compareResult.details
+  if (Array.isArray(details) && details.length > 0) return true
+  const summary = compareResult.summary
+  if (summary && typeof summary === 'object') return true
+  return false
+}
+
+/**
+ * 从服务端只读快照恢复第 5 步对比（优先 GET .../compare/result，不跑 Dify③）。
+ */
+export async function loadStep5CompareSnapshot(
+  taskId: number,
+): Promise<BackendStep5ComparisonResult | null> {
+  const snapshot = await getStep5CompareResult(taskId)
+  if (!snapshot?.compare_result) {
+    const ev = await getEvaluation(taskId)
+    if (!ev.has_compare_result) return null
+    return null
+  }
+  const compareResult = snapshot.compare_result as Record<string, unknown>
+  const rows = parseStep5CompareResultToRows(compareResult)
+  if (rows.length === 0 && !compareResultHasContent(compareResult)) return null
+  const task = await getEvaluation(taskId)
+  return { compareResult, rows, task }
+}
+
 export async function runBackendStep5Comparison(
   taskId: number,
   comparePairs?: ComparePairIn[],

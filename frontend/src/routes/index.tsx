@@ -1,7 +1,9 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import BasicLayout from '@/layouts/BasicLayout'
 import AlertPage from '@/pages/alert'
-import CompliancePage from '@/pages/compliance'
+import ComplianceTaskHub from '@/pages/compliance'
+import ComplianceWizardPage from '@/pages/compliance/ComplianceWizardPage'
+import EnterpriseStandardDocumentPage from '@/pages/compliance/EnterpriseStandardDocumentPage'
 import DashboardPage from '@/pages/dashboard'
 import EnterpriseArchiveLayout from '@/pages/enterprise-archive/Layout'
 import EnterpriseCreatePage from '@/pages/enterprise-archive/create'
@@ -52,7 +54,9 @@ export const router = createBrowserRouter([
         children: [{ index: true, element: <NoveltySearchPage /> }],
       },
       { path: 'duplicate-check', element: <DuplicateCheckPage /> },
-      { path: 'compliance', element: <CompliancePage /> },
+      { path: 'compliance', element: <ComplianceTaskHub /> },
+      { path: 'compliance/evaluations/:taskId', element: <ComplianceWizardPage /> },
+      { path: 'compliance/evaluations/:taskId/document', element: <EnterpriseStandardDocumentPage /> },
       {
         path: 'batch-normative-reference',
         element: <BatchNormativeRefLayout />,

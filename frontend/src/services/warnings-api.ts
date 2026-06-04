@@ -6,6 +6,7 @@ import axios from 'axios'
 import type {
   ForwardWarningResponseApi,
   MonitorEnterpriseListPageApi,
+  MonitorEnterpriseListStatusApi,
   MonitorSummaryApi,
   ReverseWarningResponseApi,
   WarningsScanResponseApi,
@@ -108,20 +109,50 @@ export async function fetchReverseWarning(bzId: string): Promise<ReverseWarningR
   }
 }
 
-export async function fetchMonitorSummary(): Promise<MonitorSummaryApi> {
-  try {
-    const { data } = await warningsClient.get('/warnings/monitor/summary/')
-    return unwrapData<MonitorSummaryApi>(data)
-  } catch (e) {
-    wrapError(e)
+let monitorSummaryInflight: Promise<MonitorSummaryApi> | null = null
+
+async function requestMonitorSummary(): Promise<MonitorSummaryApi> {
+  const { data } = await warningsClient.get('/warnings/monitor/summary/')
+  return unwrapData<MonitorSummaryApi>(data)
+}
+
+export type FetchMonitorSummaryOptions = {
+  /** 轮询时必须为 true，避免与页头/StrictMode 请求合并成同一次 in-flight 导致进度长期不刷新 */
+  force?: boolean
+}
+
+/**
+ * GET /warnings/monitor/summary/
+ * 默认合并短时间内的重复请求；巡检轮询请传 `{ force: true }`。
+ */
+export async function fetchMonitorSummary(
+  options?: FetchMonitorSummaryOptions,
+): Promise<MonitorSummaryApi> {
+  if (options?.force) {
+    try {
+      return await requestMonitorSummary()
+    } catch (e) {
+      wrapError(e)
+    }
   }
+  if (monitorSummaryInflight) return monitorSummaryInflight
+  monitorSummaryInflight = (async () => {
+    try {
+      return await requestMonitorSummary()
+    } catch (e) {
+      wrapError(e)
+    } finally {
+      monitorSummaryInflight = null
+    }
+  })()
+  return monitorSummaryInflight
 }
 
 export async function fetchMonitorEnterprises(params: {
   page?: number
   page_size?: number
   keyword?: string
-  status?: 'need_attention' | 'all_ok' | 'all'
+  status?: MonitorEnterpriseListStatusApi
 }): Promise<MonitorEnterpriseListPageApi> {
   try {
     const { data } = await warningsClient.get('/warnings/monitor/enterprises/', { params })
@@ -150,8 +181,34 @@ export async function fetchMonitorEnterpriseDetail(
 
 export async function triggerWarningsScan(): Promise<WarningsScanResponseApi> {
   try {
-    const { data } = await warningsClient.post('/warnings/scan/')
+    const { data } = await warningsClient.post('/warnings/scan/', {})
     return unwrapData<WarningsScanResponseApi>(data)
+  } catch (e) {
+    wrapError(e)
+  }
+}
+
+export async function pauseWarningsScan(jobId: string): Promise<{ message?: string }> {
+  try {
+    const { data } = await warningsClient.post(
+      `/warnings/scan/${encodeURIComponent(jobId)}/pause/`,
+      {},
+    )
+    return unwrapData<{ message?: string }>(data)
+  } catch (e) {
+    wrapError(e)
+  }
+}
+
+export async function resumeWarningsScan(
+  jobId: string,
+): Promise<{ message?: string; job_id?: string }> {
+  try {
+    const { data } = await warningsClient.post(
+      `/warnings/scan/${encodeURIComponent(jobId)}/resume/`,
+      {},
+    )
+    return unwrapData<{ message?: string; job_id?: string }>(data)
   } catch (e) {
     wrapError(e)
   }
