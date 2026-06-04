@@ -234,7 +234,7 @@ export default function BatchJobDetailPage() {
                 <Tooltip
                   title={
                     <span style={{ fontSize: 13 }}>
-                      按文件序号分块，仅列出与现行主号不一致的引用（发布时完整号与最新标准号）；无此类引用时下载文件内为提示说明。
+                      视频文案 txt：每期含文字段1（通报头）+ 文字段2（企业名单）+ 文字段3（不一致明细，与名单顺序一致）；每 10 家为一期，超出则分多期并标注分隔行。
                     </span>
                   }
                 >

@@ -10,3 +10,5 @@
 | [02-novelty-search.md](./02-novelty-search.md) | `/novelty-search` |
 | [03-enterprise-archive.md](./03-enterprise-archive.md) | `/enterprise-archive` |
 | [04-system-security-audit.md](./04-system-security-audit.md) | `/system` |
+
+**预警系统**（路由 `/alert`）后端接口说明见：[backend-warnings-API-后端开发执行方案.md](../backend-warnings-API-后端开发执行方案.md)（后端实现）；[backend-warnings-API-前端对接手册.md](../backend-warnings-API-前端对接手册.md)（前端联调）。

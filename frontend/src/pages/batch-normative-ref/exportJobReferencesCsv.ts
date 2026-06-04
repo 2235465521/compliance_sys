@@ -8,7 +8,13 @@ import {
 } from '@/services/compliance'
 import { buildValidityPedigreeShortLabel, extractReferenceRowStatusDisplay } from '@/pages/compliance/utils/validityPedigree'
 import { formatPedigreePlainForCsv } from '@/pages/compliance/utils/pedigreeExplanationDisplay'
-import { pickCompanyForItem, pickQbCode, pickQbShortName } from '@/pages/batch-normative-ref/itemMetaDisplay'
+import {
+  pickCompanyForItem,
+  pickLocationForItem,
+  pickQbCode,
+  pickQbShortName,
+  pickQbStandardTitle,
+} from '@/pages/batch-normative-ref/itemMetaDisplay'
 
 type ExportColumnKey =
   | 'rowIndex'
@@ -352,56 +358,156 @@ function formatQbTitleLine(qbName: string, qbCode: string): string {
   return '—'
 }
 
-const TXT_BLOCK_SEPARATOR = '================================================================================'
+const MISMATCH_COMPANIES_PER_EPISODE = 10
+/** 文字段 3：每家企业最多展示的「引用标准 / 现行有效」组数 */
+const MAX_MISMATCH_REFS_PER_COMPANY = 2
 
-/** 按文件序号分组，仅含与现行主号不一致的引用清单（纯文本） */
-export function buildBatchNormativeRefMismatchSummaryText(job: BatchNormativeRefJobOut): string {
-  const flat = flattenExportRows(job)
-  const byFileSeq = new Map<number, BatchNormativeRefExportRow[]>()
+/** 文字段 1：固定文案模板（X / XX 为字面占位，导出时不替换为真实数据） */
+const TEXT_BLOCK_1_TEMPLATE = `企业标准健康体检通报2026年第XX期
+涉及XX省、XX省等地企业
+2026年X月XX日，中科标准开展了2026年第X批企标健康体检，发现部分引用的规范性文件已修订、废止或被替代，存在健康隐患，其中有涉及XX、XX、XX等地企业，提醒以下企业及时核对`
 
-  for (const row of flat) {
-    if (!isCitationMainNumberMismatch(row.r)) continue
-    const list = byFileSeq.get(row.fileSeq) ?? []
-    list.push(row)
-    byFileSeq.set(row.fileSeq, list)
+type MismatchRefPair = { historical: string; latest: string }
+
+type CompanyQbMismatchBlock = {
+  qbName: string
+  qbCode: string
+  refs: MismatchRefPair[]
+}
+
+type CompanyMismatchGroup = {
+  company: string
+  location: string
+  qbBlocks: CompanyQbMismatchBlock[]
+}
+
+function hasExportableCompanyName(company: string): boolean {
+  const name = company.trim()
+  if (!name) return false
+  if (name === '—' || name === '（未命名企业）') return false
+  return true
+}
+
+function companyNameOnly(group: CompanyMismatchGroup): string {
+  return group.company.trim()
+}
+
+function buildTextBlock1(): string {
+  return TEXT_BLOCK_1_TEMPLATE
+}
+
+/** 文字段 2：企业名单（仅公司名，每家之间空一行） */
+function buildTextBlock2(chunk: CompanyMismatchGroup[]): string {
+  return chunk.map(companyNameOnly).join('\n\n')
+}
+
+/** 文字段 3：不一致明细（顺序与文字段 2 一致；每企最多 2 组引用标准） */
+function buildTextBlock3(chunk: CompanyMismatchGroup[]): string {
+  const companyBlocks: string[] = []
+  for (const group of chunk) {
+    const lines: string[] = [companyNameOnly(group)]
+    let refPairsShown = 0
+    for (const qb of group.qbBlocks) {
+      if (refPairsShown >= MAX_MISMATCH_REFS_PER_COMPANY) break
+      lines.push(formatQbTitleLine(qb.qbName, qb.qbCode))
+      for (const ref of qb.refs) {
+        if (refPairsShown >= MAX_MISMATCH_REFS_PER_COMPANY) break
+        lines.push(`引用标准：${ref.historical}`)
+        lines.push(`现行有效：${ref.latest}`)
+        refPairsShown += 1
+      }
+    }
+    companyBlocks.push(lines.join('\n'))
   }
+  return companyBlocks.join('\n\n')
+}
 
-  const fileSeqs = [...byFileSeq.keys()].sort((a, b) => a - b)
-  if (fileSeqs.length === 0) {
-    return '本批次无与现行主号不一致的引用（仅统计可自动比对且 citation_matches_latest 为 false 的条目）。'
+function buildEpisodeSeparator(episodeIndex: number, companyCount: number): string {
+  if (companyCount >= MISMATCH_COMPANIES_PER_EPISODE) {
+    return `=======该批次可做的第${episodeIndex}期素材======`
   }
+  return `=======该批次可做的第${episodeIndex}期素材（不够，${companyCount}家公司）======`
+}
 
-  const blocks: string[] = []
-  for (let i = 0; i < fileSeqs.length; i++) {
-    const fileSeq = fileSeqs[i]!
-    const rows = byFileSeq.get(fileSeq) ?? []
-    const head = rows[0]!
-    const lines: string[] = [
-      `【文件序号：${fileSeq}】`,
-      '',
-      `企业名称：${head.company.trim() || '—'}`,
-      '',
-      formatQbTitleLine(head.qbName, head.qbCode),
-      '----------------------------------------',
-    ]
+/** 按企业聚合不一致引用（同一企业多份企标合并，不按文件序号拆分） */
+function buildCompanyMismatchGroups(job: BatchNormativeRefJobOut): CompanyMismatchGroup[] {
+  const order: string[] = []
+  const map = new Map<string, CompanyMismatchGroup>()
 
-    rows.forEach((row, idx) => {
-      const historical = String(row.r.historicalFullStdCode ?? '').trim() || '—'
-      const latest = buildLatestStandardCellFromRow(row.r).trim() || '—'
-      lines.push(`${idx + 1}. 发布时引用的完整标准号：${historical}`)
-      lines.push(`   最新标准号：${latest}`)
-      if (idx < rows.length - 1) lines.push('')
-    })
+  for (const item of job.items) {
+    if (item.status !== 'completed') continue
 
-    blocks.push(lines.join('\n'))
-    if (i < fileSeqs.length - 1) {
-      blocks.push('')
-      blocks.push(TXT_BLOCK_SEPARATOR)
-      blocks.push('')
+    const company = pickCompanyForItem(item, job).trim()
+    if (!hasExportableCompanyName(company)) continue
+
+    const location = pickLocationForItem(item)
+    const qbName = pickQbStandardTitle(item) || pickQbShortName(item)
+    const qbCode = pickQbCode(item)
+    const qbKey = `${qbCode}::${qbName}`
+
+    const resolved = hasResolvedReferenceRows(item)
+      ? mapReferencesResolvedToStandardLatestResults(item.references_resolved)
+      : []
+    const mismatches = resolved.filter(isCitationMainNumberMismatch)
+    if (mismatches.length === 0) continue
+
+    let group = map.get(company)
+    if (!group) {
+      group = { company, location: location.trim(), qbBlocks: [] }
+      map.set(company, group)
+      order.push(company)
+    } else if (!group.location && location.trim()) {
+      group.location = location.trim()
+    }
+
+    let qbBlock = group.qbBlocks.find((b) => `${b.qbCode}::${b.qbName}` === qbKey)
+    if (!qbBlock) {
+      qbBlock = { qbName, qbCode, refs: [] }
+      group.qbBlocks.push(qbBlock)
+    }
+
+    for (const r of mismatches) {
+      qbBlock.refs.push({
+        historical: String(r.historicalFullStdCode ?? '').trim() || '—',
+        latest: buildLatestStandardCellFromRow(r).trim() || '—',
+      })
     }
   }
 
-  return blocks.join('\n')
+  return order.map((key) => map.get(key)!).filter((g) => hasExportableCompanyName(g.company))
+}
+
+/**
+ * 不一致引用清单（纯文本）：
+ * 每期素材 = 文字段1 + 文字段2 + 文字段3（每段最多 10 家企业，按企业聚合且 2、3 顺序一致）。
+ */
+export function buildBatchNormativeRefMismatchSummaryText(job: BatchNormativeRefJobOut): string {
+  const groups = buildCompanyMismatchGroups(job)
+  if (groups.length === 0) {
+    return '本批次无与现行主号不一致的引用（仅统计可自动比对且 citation_matches_latest 为 false 的条目）。'
+  }
+
+  const parts: string[] = []
+  let episodeIndex = 0
+
+  for (let start = 0; start < groups.length; start += MISMATCH_COMPANIES_PER_EPISODE) {
+    episodeIndex += 1
+    const chunk = groups.slice(start, start + MISMATCH_COMPANIES_PER_EPISODE)
+
+    if (episodeIndex > 1) {
+      parts.push('')
+      parts.push(buildEpisodeSeparator(episodeIndex, chunk.length))
+      parts.push('')
+    }
+
+    parts.push(buildTextBlock1())
+    parts.push('')
+    parts.push(buildTextBlock2(chunk))
+    parts.push('')
+    parts.push(buildTextBlock3(chunk))
+  }
+
+  return parts.join('\n').trimEnd()
 }
 
 export function downloadBatchNormativeRefMismatchSummaryTxt(job: BatchNormativeRefJobOut) {
