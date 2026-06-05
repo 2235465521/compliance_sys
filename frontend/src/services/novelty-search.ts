@@ -1,31 +1,36 @@
 /**
- * 查新服务 — 前端数据层（演示 / Mock）
- *
- * MOCK: 任务列表、任务详情状态机、专用表持久化、比对编排、查新 PDF 等 REST 契约
- * 在后端说明文档中尚未覆盖，本文件全部走内存 Store + 人工延迟，便于界面联调与验收。
- * 对接真实 API 时：将下列函数改为 request 调用，并删除或收窄 Mock 分支。
+ * 查新服务 — 前端数据层（仅调用后端 API）
+ * 手册：docs/frontend-novelty-search-API-对接说明-2026.md
  */
 import request from './request'
+import {
+  confirmNoveltyReferenceSheet,
+  createNoveltySearchTask,
+  deleteNoveltySearchTask,
+  getNoveltySearchTask,
+  getNoveltySearchTaskIndicators,
+  listNoveltySearchTasks,
+  NoveltySearchApiError,
+  patchNoveltyReferenceSheet,
+  retryNoveltySearchTask,
+} from '@/services/novelty-search-api'
 import type { PaginatedResponse, StandardItem } from '@/types/dashboard'
-import { applyParsingCompleteForDemo, useNoveltyStore } from '@/stores/novelty-search'
+import {
+  mapNoveltyTaskFromApi,
+  mapNoveltyTaskSummaryFromApi,
+  mapReferenceSheetRowToApi,
+} from '@/pages/novelty-search/utils/mapNoveltyApi'
 import type {
-  CreateTaskFromFormInput,
-  CreateTaskFromNationalInput,
   CreateTaskFromUploadInput,
+  NoveltyIndicatorsBundle,
   NoveltyTask,
   ReferenceSheetRow,
-  ReportState,
 } from '@/types/novelty-search'
 
-const MOCK_LATENCY_MS = 280
-
-function delay(ms = MOCK_LATENCY_MS) {
-  return new Promise((r) => setTimeout(r, ms))
-}
+export { NoveltySearchApiError } from '@/services/novelty-search-api'
 
 /**
- * 按企标号在标准库（StdBase）中检索：GET /api/standards/?bz_id=…
- * 调用标准库列表接口 `GET /api/standards/?bz_id=…`；失败时返回空数组（由界面提示）。
+ * 按企标号在标准库检索：GET /api/standards/?bz_id=…（标准库模块，非查新 API）
  */
 export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<StandardItem[]> {
   const q = bzId.trim()
@@ -49,67 +54,105 @@ export async function queryStandardsByEnterpriseBzId(bzId: string): Promise<Stan
   }
 }
 
-export async function fetchTaskList(): Promise<NoveltyTask[]> {
-  await delay()
-  return [...useNoveltyStore.getState().tasks].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  )
+export async function fetchTaskList(params?: {
+  page?: number
+  page_size?: number
+  keyword?: string
+  status?: string
+  qb_code?: string
+}): Promise<{ tasks: NoveltyTask[]; total: number; page: number; page_size: number }> {
+  const page = await listNoveltySearchTasks({
+    page: params?.page ?? 1,
+    page_size: params?.page_size ?? 100,
+    keyword: params?.keyword,
+    status: params?.status,
+    qb_code: params?.qb_code,
+  })
+  const results = Array.isArray(page.results) ? page.results : []
+  return {
+    tasks: results.map(mapNoveltyTaskSummaryFromApi),
+    total: page.total,
+    page: page.page,
+    page_size: page.page_size,
+  }
 }
 
 export async function fetchTaskById(id: string): Promise<NoveltyTask | null> {
-  await delay(120)
-  return useNoveltyStore.getState().getTask(id) ?? null
+  try {
+    const api = await getNoveltySearchTask(id)
+    return mapNoveltyTaskFromApi(api)
+  } catch (e) {
+    if (e instanceof NoveltySearchApiError && e.status === 404) return null
+    throw e
+  }
 }
 
-/** MOCK: 上传通道创建任务（未调用 POST /api/analyze_qb_references_auto/） */
 export async function createTaskFromUpload(input: CreateTaskFromUploadInput): Promise<NoveltyTask> {
-  await delay()
-  const task = useNoveltyStore.getState().addTaskFromUpload(input)
-  return task
-}
-
-/** MOCK: 表单通道创建任务 */
-export async function createTaskFromForm(input: CreateTaskFromFormInput): Promise<NoveltyTask> {
-  await delay()
-  return useNoveltyStore.getState().addTaskFromForm(input)
-}
-
-/** MOCK: 上传国标通道（顿号分隔多国标，演示「最新版」映射） */
-export async function createTaskFromNational(input: CreateTaskFromNationalInput): Promise<NoveltyTask> {
-  await delay()
-  return useNoveltyStore.getState().addTaskFromNational(input)
-}
-
-/** MOCK: 保存专用表草稿 */
-export async function saveReferenceSheetDraft(taskId: string, rows: ReferenceSheetRow[]): Promise<void> {
-  await delay(160)
-  useNoveltyStore.getState().saveReferenceDraft(taskId, rows)
-}
-
-/** MOCK: 确认专用表并触发演示比对流水线 */
-export async function confirmReferenceSheet(taskId: string): Promise<void> {
-  await delay(200)
-  useNoveltyStore.getState().confirmReferenceSheet(taskId)
+  const api = await createNoveltySearchTask({
+    qb_code: input.enterpriseStdNo,
+    source: 'upload',
+    file: input.file,
+  })
+  return mapNoveltyTaskFromApi(api)
 }
 
 /**
- * MOCK: 模拟「企标解析完成」并写入专用表初稿。
- * 真实环境应由 WebSocket 或轮询任务状态后刷新详情。
+ * 一键查新：创建任务并自动确认专用表，返回含 compare_rows 的完成任务。
+ * 后端为同步实现，无需轮询。
  */
-export async function runDemoParsingSequence(taskId: string): Promise<void> {
-  await delay(600)
-  applyParsingCompleteForDemo(taskId)
+export async function runNoveltySearchByQbCode(qbCode: string): Promise<NoveltyTask> {
+  const code = qbCode.trim()
+  if (!code) {
+    throw new NoveltySearchApiError('请输入企标号', 400)
+  }
+  const created = await createNoveltySearchTask({ qb_code: code, source: 'form' })
+  const rows = created.reference_sheet ?? []
+  const confirmed = await confirmNoveltyReferenceSheet(
+    created.id,
+    rows.length > 0 ? { rows } : undefined,
+  )
+  return mapNoveltyTaskFromApi(confirmed)
 }
 
-/** MOCK: 生成查新 PDF（占位） */
-export async function requestReportPdf(taskId: string): Promise<void> {
-  await delay(150)
-  useNoveltyStore.getState().setReportState(taskId, 'generating')
-  await delay(1200)
-  useNoveltyStore.getState().setReportState(taskId, 'ready', new Date().toISOString())
+export async function saveReferenceSheetDraft(taskId: string, rows: ReferenceSheetRow[]): Promise<NoveltyTask> {
+  const api = await patchNoveltyReferenceSheet(taskId, {
+    rows: rows.map(mapReferenceSheetRowToApi),
+  })
+  return mapNoveltyTaskFromApi(api)
 }
 
-export async function setReportStateMock(taskId: string, state: ReportState, at?: string): Promise<void> {
-  await delay(80)
-  useNoveltyStore.getState().setReportState(taskId, state, at)
+export async function confirmReferenceSheet(taskId: string, rows?: ReferenceSheetRow[]): Promise<NoveltyTask> {
+  const body = rows ? { rows: rows.map(mapReferenceSheetRowToApi) } : undefined
+  const api = await confirmNoveltyReferenceSheet(taskId, body)
+  return mapNoveltyTaskFromApi(api)
+}
+
+export async function retryNoveltyTask(taskId: string): Promise<NoveltyTask> {
+  const api = await retryNoveltySearchTask(taskId)
+  return mapNoveltyTaskFromApi(api)
+}
+
+/** 永久删除一条查新历史记录（DELETE /tasks/{id}，204 无 body） */
+export async function deleteNoveltyTask(taskId: string | number): Promise<void> {
+  await deleteNoveltySearchTask(taskId)
+}
+
+export async function fetchTaskIndicators(taskId: string): Promise<NoveltyIndicatorsBundle> {
+  const api = await getNoveltySearchTaskIndicators(taskId)
+  return {
+    enterpriseIndicators: (api.enterprise_indicators ?? []).map((r, i) => ({
+      id: `ent-${i}`,
+      name: String(r.name ?? r.indicator_name ?? '—'),
+      value: String(r.value ?? r.indicator_value ?? '—'),
+      source: r.source,
+      sourceId: r.source_id,
+    })),
+    nationalByStdCode: api.national_by_std_code ?? {},
+    sourceEvaluations: (api.source_evaluations ?? []).map((s) => ({
+      sourceType: s.source_type,
+      sourceId: s.source_id,
+      evaluatedAt: s.evaluated_at,
+      title: s.title,
+    })),
+  }
 }

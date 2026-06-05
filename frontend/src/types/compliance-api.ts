@@ -11,6 +11,11 @@ export interface ComplianceTaskOut {
   has_parse_result: boolean
   parse_status: ParseStatus
   parse_error: string | null
+  /** 后端扩展：是否已有 step5 对比快照（见过程控制需求文档） */
+  has_compare_result?: boolean
+  compare_result_updated_at?: string | null
+  enterprise_name?: string | null
+  updated_at?: string | null
 }
 
 export interface ModuleMetaOut {
@@ -111,6 +116,78 @@ export interface Step4IndicatorsOut {
   national_by_std_code: Record<string, unknown[]>
   missing_gb_files: MissingGbFileItem[]
   dify2_invoked_std_codes: string[]
+}
+
+/** 第五步 ③ 可对比标准一行（发布完整号 | 最新标准号） */
+export interface ComparePairIn {
+  publication_std_code: string | null
+  latest_std_code: string
+}
+
+export interface Step4IndicatorsEnsureIn {
+  compare_pairs: ComparePairIn[]
+}
+
+export type StdCodeOrchestrationStatusKind = 'ready' | 'parsed_via_dify2' | 'missing_file'
+
+export interface StdCodeOrchestrationStatus {
+  std_code: string
+  std_name: string | null
+  status: StdCodeOrchestrationStatusKind
+  indicator_count: number
+  reason?: string | null
+}
+
+/** POST .../step/4/indicators/ensure 响应（在 Step4IndicatorsOut 上扩展） */
+export interface Step4IndicatorsEnsureOut extends Step4IndicatorsOut {
+  all_ready: boolean
+  std_statuses: StdCodeOrchestrationStatus[]
+  /** N 侧发布时引用标准号（由 compare_pairs 派生，不含 M） */
+  publication_std_codes?: string[]
+  /** N+M 侧最新标准号（含补充 M） */
+  latest_std_codes?: string[]
+}
+
+/** POST .../step/5/compare 可选请求体（构建时带上当前 ③ compare_pairs） */
+export interface Step5CompareIn {
+  compare_pairs?: ComparePairIn[]
+}
+
+/** 国标指标库单行（`national_standard_indicator`） */
+export interface NationalIndicatorRowOut {
+  id: number
+  std_code: string
+  specific_indicator_value: string
+  manual_review_status: 'pending' | 'approved' | 'rejected' | null
+  std_name?: string | null
+}
+
+export interface NationalIndicatorListOut {
+  std_code: string
+  std_name: string | null
+  rows: NationalIndicatorRowOut[]
+}
+
+export interface NationalIndicatorReviewIn {
+  manual_review_status: 'pending' | 'approved' | 'rejected'
+}
+
+export interface NationalIndicatorReviewOut {
+  id: number
+  std_code: string
+  manual_review_status: string
+}
+
+export interface NationalIndicatorSaveIn {
+  std_code: string
+  specific_indicator_value: string
+}
+
+export interface NationalIndicatorSaveOut {
+  id: number
+  std_code: string
+  specific_indicator_value: string
+  manual_review_status: 'pending' | 'approved' | 'rejected' | null
 }
 
 export interface Step5CompareOut {

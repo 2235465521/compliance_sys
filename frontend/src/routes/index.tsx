@@ -1,17 +1,17 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import BasicLayout from '@/layouts/BasicLayout'
 import AlertPage from '@/pages/alert'
-import CompliancePage from '@/pages/compliance'
+import ComplianceTaskHub from '@/pages/compliance'
+import ComplianceWizardPage from '@/pages/compliance/ComplianceWizardPage'
+import EnterpriseStandardDocumentPage from '@/pages/compliance/EnterpriseStandardDocumentPage'
 import DashboardPage from '@/pages/dashboard'
 import EnterpriseArchiveLayout from '@/pages/enterprise-archive/Layout'
 import EnterpriseCreatePage from '@/pages/enterprise-archive/create'
 import EnterpriseDetailPage from '@/pages/enterprise-archive/detail/EnterpriseDetailPage'
 import EnterpriseListPage from '@/pages/enterprise-archive/list'
 import DuplicateCheckPage from '@/pages/duplicate-check'
-import NoveltyCreateTaskPage from '@/pages/novelty-search/create'
-import NoveltyTaskListPage from '@/pages/novelty-search/list'
 import NoveltySearchLayout from '@/pages/novelty-search/Layout'
-import TaskDetailPage from '@/pages/novelty-search/tasks/TaskDetailPage'
+import NoveltySearchPage from '@/pages/novelty-search'
 import StandardLibraryBodyIngestPage from '@/pages/standard-library/body'
 import StandardLibraryIndexRedirect from '@/pages/standard-library'
 import StandardLibraryIndexIngestPage from '@/pages/standard-library/index-ingest'
@@ -51,14 +51,12 @@ export const router = createBrowserRouter([
       {
         path: 'novelty-search',
         element: <NoveltySearchLayout />,
-        children: [
-          { index: true, element: <NoveltyTaskListPage /> },
-          { path: 'create', element: <NoveltyCreateTaskPage /> },
-          { path: 'tasks/:taskId', element: <TaskDetailPage /> },
-        ],
+        children: [{ index: true, element: <NoveltySearchPage /> }],
       },
       { path: 'duplicate-check', element: <DuplicateCheckPage /> },
-      { path: 'compliance', element: <CompliancePage /> },
+      { path: 'compliance', element: <ComplianceTaskHub /> },
+      { path: 'compliance/evaluations/:taskId', element: <ComplianceWizardPage /> },
+      { path: 'compliance/evaluations/:taskId/document', element: <EnterpriseStandardDocumentPage /> },
       {
         path: 'batch-normative-reference',
         element: <BatchNormativeRefLayout />,

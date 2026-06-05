@@ -1,6 +1,6 @@
 # 标准库管理模块：界面规划说明
 
-本文档依据「标准库管理」业务流程图（行业分类、国标元数据、数据正文库、标准谱系、查询统计及审计汇总）与《标准化信息服务平台——需求分析文档》第 8.1 节整理，供成员五前端实现对照。**与后端路径、用途的对照见第 8 节**；单条响应字段以 DRF 序列化与联调为准。全局响应形态（分页、`code` 包装等）见《[后端接口说明文档.md](../../后端接口说明文档.md)》第 1 节。
+本文档依据「标准库管理」业务流程图（行业分类、国标元数据、数据正文库、标准谱系、查询统计及审计汇总）与《标准化信息服务平台——需求分析文档》第 8.1 节整理，供成员五前端实现对照。单条响应字段、分页与鉴权等**以后端新接口说明及联调结果为准**。
 
 ---
 
@@ -138,61 +138,6 @@
 - **正文解析**：超过数秒的步骤必须显示进度，避免白屏与重复点击（与需求 10.1 异步反馈一致）。
 - **检索**：复杂条件折叠在「展开更多」中，减少首屏压力。
 - **可访问性**：表格提供列宽拖动或关键列固定（按产品要求）。
-
----
-
-## 8. 后端接口对照（摘自《后端接口说明文档》）
-
-下列接口在现行文档中已描述，**可用于本模块界面**（基址 `…/api/`，与前端 `VITE_API_BASE_URL` 一致）。未列出的能力（如独立「行业分类配置」专用 CRUD）文档中**尚未出现**对应路径，需后端补充或走 Django Admin。
-
-### 8.1 国标元数据 / 标准主数据
-
-| 方法 | 路径 | 用途（界面落点） | 备注 |
-|------|------|------------------|------|
-| GET | `/api/standards/` | 元数据分页列表、筛选 | Query：`page`、`ex_state`、`search`（`bz_id`/`bz_name` 模糊） |
-| POST / PATCH / PUT / DELETE | `/api/standards/`、`/api/standards/{id}/` | 新建、更新、删除单条标准 | 见文档 §3 资源级 CRUD |
-| GET | `/api/standards/detail-info/` | 标准详情卡片（CCS、ICS、起草单位等） | Query：**必填** `bz_id` |
-| GET | `/api/detail_info/` | `DetailInfo` 资源分页列表 | 与 `detail-info` 单条查询互补 |
-
-### 8.2 检索、统计、模糊查新（工作台能力）
-
-| 方法 | 路径 | 用途（界面落点） | 备注 |
-|------|------|------------------|------|
-| GET | `/api/standards/basic-search/` | 关键字模糊检索（表格/下拉数据源） | Query：`q`，空则返回空数组 |
-| GET | `/api/standards/statistics/` | **标准库状态统计**（类型 GB/QB/…、状态现行/废止/即将实施计数） | 对应「查询统计」页图表/卡片 |
-| POST | `/api/standards/batch-fuzzy-check/` | 批量模糊查新 | Body：`{ "keywords": ["…"] }`；返回 `isLatest`/`latestId` 等 |
-| GET | `/api/statistics/` | `Statistical` 模型分页列表 | **不同于** `standards/statistics/`，勿混用 |
-
-### 8.3 谱系与关系
-
-| 方法 | 路径 | 用途（界面落点） | 备注 |
-|------|------|------------------|------|
-| GET | `/api/standards/check-latest/` | 单标准是否最新、谱系链条摘要 | Query：**必填** `bz_id`；无包装 `code` 的成功体 |
-| GET | `/api/get_tree_data/` | **族谱图**节点与边（ECharts） | Query：**必填** `bz_id`；`nodes`/`links`、`relation_type` |
-| GET | `/api/relations/` | 标准关系边分页列表 | 替代/废止等关系维护的数据源之一 |
-| GET | `/api/replaces_table/` | 替代关系表分页 | 与谱系页、列表联动 |
-
-### 8.4 目录 / 索引 / 正文相关
-
-| 方法 | 路径 | 用途（界面落点） | 备注 |
-|------|------|------------------|------|
-| GET | `/api/indexes_table/` | 索引表分页 | Query：分页；`index_type` 精确过滤 |
-| GET | `/api/standards/download-doc/` | 下载标准 **PDF**（本地文档库） | Query：**必填** `bz_id`；返回二进制流 |
-| GET | `/api/dify/preface-diff/` | 前言解析状态 / 差异结果 | Query：**必填** `bz_id`；`status`：`ready`/`extracting`/`file_missing` 等 |
-| POST | `/api/dify/preface-upload/` | 上传前言 PDF 并触发解析 | `multipart`：`bz_id` + `file`；标准须已在 `StdBase` 注册 |
-
-### 8.5 本模块规划与文档缺口
-
-- **行业分类（ICS/CCS/自定义）独立维护**：当前说明文档**未给出**单独分类资源路径；`detail-info` 中含 `ccs`/`ics` 字段，可部分支撑展示，**分类树 CRUD** 需确认是否仅 `/admin` 或待补 API。
-- **合规 Excel 导出** `GET|POST /api/standards/export-report/`：文档标注为**合规审查**导出，界面归属更贴近**合规评价/工作台**，一般不放在标准库管理主流程，除非产品明确要求入口放在本模块。
-
-### 8.6 不宜归入本模块的接口（避免混用）
-
-| 路径 | 说明 |
-|------|------|
-| `/api/standards/warning-trace/` | 预警追溯，面向**预警**场景 |
-| `/api/standards/dashboard-alerts/` | **仪表盘**大屏预警 |
-| `GET /api/warnings/`、`POST /api/warnings/scan` 等 | **实时预警**业务线 |
 
 ---
 

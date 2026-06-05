@@ -1,4 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Alert,
   Button,
@@ -6,7 +7,9 @@ import {
   Checkbox,
   Col,
   Descriptions,
+  Form,
   Input,
+  Modal,
   Radio,
   Row,
   Space,
@@ -28,16 +31,24 @@ import {
   confirmEvaluationAuditStep2,
   confirmEvaluationAuditStep3,
   confirmEvaluationAuditStep4,
+  confirmEvaluationAuditStep5,
   exportComplianceReport,
   fileComplianceOutcomeLabel,
   getComplianceEvaluationTaskId,
+  ensureStep4IndicatorsForCompare,
+  runBackendStep5Comparison,
+  setComplianceEvaluationTaskId,
+  uploadNationalStandard,
   getNationalIndexes,
   getPendingIndexes,
   isRowCitationAutoLatest,
   isRowCitationAutoOutdated,
+  loadManualSupplementStdCodes,
+  loadPostedSupplementStdCodes,
   pollComplianceEvaluationUntilParseSettled,
   postInsertIndexes,
-  saveReferenceMapping,
+  saveManualSupplementStdCodes,
+  syncEvaluationStep3Supplements,
   submitAuditBulkDecision,
   submitAuditDecision,
   type NationalIndexItem,
@@ -45,14 +56,39 @@ import {
   type StandardLatestCheckResult,
   uploadEnterpriseStandard,
 } from '@/services/compliance'
-import { getEvaluation, getStep4Indicators } from '@/services/compliance-api'
-import type { MissingGbFileItem } from '@/types/compliance-api'
+import { classifyStep5AuditDiagnostics } from '@/pages/compliance/utils/step5AuditDiagnostics'
+import {
+  buildComparePairsFromDiagnostics,
+  buildComparablePairsSignature,
+} from '@/pages/compliance/utils/step5ComparableStdCodes'
+import { buildStdOrchestrationLookup } from '@/pages/compliance/utils/step5StdOrchestrationLookup'
+import { getEvaluation } from '@/services/compliance-api'
+import type { MissingGbFileItem, StdCodeOrchestrationStatus } from '@/types/compliance-api'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 import {
   downloadComplianceConclusionTextReport,
   safeFilenameSegment,
 } from '@/pages/compliance/utils/stepReportExport'
 import { ReferenceLatestResolvedTable } from '@/pages/compliance/components/ReferenceLatestResolvedTable'
+import { TechnicalComparisonStep } from '@/pages/compliance/components/TechnicalComparisonStep'
+import type { ComparePreviewRow } from '@/pages/compliance/comparison-types'
+import { loadWizardDraft, saveWizardDraft } from '@/pages/compliance/utils/complianceWizardDraft'
+import {
+  isCompareAuditSatisfied,
+  isDescriptiveAuditSatisfied,
+  isExtractAuditSatisfied,
+  isStep3RowPendingAudit,
+  isValidityAuditSatisfied,
+  markStep3RowsApprovedIfNeeded,
+} from '@/pages/compliance/utils/complianceWizardAuditSync'
+import {
+  hydrateDescriptiveFromStep1,
+  hydrateStep3Tables,
+  hydrateStep4ValidityRows,
+  hydrateStep5Compare,
+} from '@/pages/compliance/utils/complianceWizardHydrate'
+
+export type { ComparePreviewRow } from '@/pages/compliance/comparison-types'
 
 const { Text } = Typography
 
@@ -64,18 +100,6 @@ export const WIZARD_STEP_TITLES = [
   '指标映射与技术对比确认',
   '三项评价总结与报告生成',
 ]
-
-export type ComparePreviewRow = {
-  id: string
-  indicatorName: string
-  enterpriseValue: string
-  matchedStandard: string
-  nationalValue: string
-  status: string
-  source: 'enterprise_or_old' | 'manual'
-  baselineStandard?: string
-  latestStandard?: string
-}
 
 type DescriptiveReviewState = {
   bzId: string
@@ -103,6 +127,8 @@ export type WizardProgressSnapshot = {
 }
 
 export type ComplianceWizardPanelProps = {
+  /** 路由传入时绑定评价任务（并写入 localStorage） */
+  taskId?: number
   onProgressSnapshot?: (snapshot: WizardProgressSnapshot) => void
   afterUploadSuccess?: () => void
 }
@@ -195,106 +221,19 @@ const normalizeReferenceCode = (value: string) => value.replace(/\s+/g, '').trim
 const ALLOWED_REFERENCE_CODE_PREFIX_REGEX = /^(GB\/T|GB|ISO|IEC)/i
 const isAllowedReferenceCode = (code: string) => ALLOWED_REFERENCE_CODE_PREFIX_REGEX.test(code)
 
-const normalizeComparisonText = (value: string) =>
-  value.replace(/\s+/g, '').replace(/[；;，,。\.、:：\-_]/g, '').trim()
+/** 第四步映射完整性：仅要求 GB 开头国标行填写「最新标准号」 */
+const isGbReferencedStandard = (code: string) => /^GB/i.test(normalizeReferenceCode(code))
 
-const parseFirstNumber = (text: string): number | null => {
-  const match = text.match(/-?\d+(?:\.\d+)?/)
-  if (!match) return null
-  const parsed = Number(match[0])
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-const evaluateByRuleExpression = (enterpriseValue: string, latestValue: string): string | null => {
-  const source = latestValue.replace(/\s+/g, '')
-  const enterpriseNumeric = parseFirstNumber(enterpriseValue)
-  if (enterpriseNumeric === null) return null
-
-  const lessEqual = source.match(/(?:<=|≤)(-?\d+(?:\.\d+)?)/)
-  if (lessEqual) {
-    const threshold = Number(lessEqual[1])
-    return enterpriseNumeric <= threshold ? '合规' : '不合规（高于国标）'
-  }
-
-  const greaterEqual = source.match(/(?:>=|≥)(-?\d+(?:\.\d+)?)/)
-  if (greaterEqual) {
-    const threshold = Number(greaterEqual[1])
-    return enterpriseNumeric >= threshold ? '合规' : '不合规（低于国标）'
-  }
-
-  const range = source.match(/(-?\d+(?:\.\d+)?)\s*(?:~|～|-|—|至)\s*(-?\d+(?:\.\d+)?)/)
-  if (range) {
-    const left = Number(range[1])
-    const right = Number(range[2])
-    const min = Math.min(left, right)
-    const max = Math.max(left, right)
-    return enterpriseNumeric >= min && enterpriseNumeric <= max ? '合规' : '不合规（超出国标范围）'
-  }
-  return null
-}
-
-const normalizeBackendSingleResult = (value?: string): string => {
-  const text = (value ?? '').trim()
-  if (!text || text === '-') return ''
-  if (text.includes('一致') || text.includes('合规') || text.toLowerCase() === 'pass') return '合规'
-  if (text.includes('高') || text.includes('超') || text.includes('严于')) return '不合规（高于国标）'
-  if (text.includes('低') || text.includes('弱于')) return '不合规（低于国标）'
-  if (text.includes('不合规') || text.toLowerCase() === 'fail') return '不合规'
-  return text
-}
-
-const buildComparisonResult = (
-  indicatorName: string,
-  enterpriseValue: string,
-  latestRows: NationalIndexItem[],
-): Pick<ComparePreviewRow, 'matchedStandard' | 'status' | 'nationalValue' | 'latestStandard'> => {
-  const match = latestRows.find(
-    (latest) =>
-      latest.indexName.includes(indicatorName) || indicatorName.includes(latest.indexName),
+function collectReferenceStdCodesForValidity(rows: PendingIndexItem[]): string[] {
+  const approved = rows.filter((r) => r.statusText.includes('审核通过'))
+  const source = approved.length > 0 ? approved : rows
+  return Array.from(
+    new Set(
+      source
+        .map((item) => item.standardName.trim())
+        .filter((name) => name.length > 0 && name !== '-'),
+    ),
   )
-  if (!match) {
-    return {
-      matchedStandard: '-',
-      status: '未在国标指标库中找到对应项',
-      nationalValue: '待确认',
-      latestStandard: '请补齐引用文件或手工补录',
-    }
-  }
-  const backendSingleResult = normalizeBackendSingleResult(match.singleResult)
-  const backendMatchStatus = (match.matchStatus ?? '').trim()
-  const enterpriseNormalized = normalizeComparisonText(enterpriseValue)
-  const latestNormalized = normalizeComparisonText(match.indexValue)
-
-  let singleResult = backendSingleResult
-  if (!singleResult) {
-    const ruleResult = evaluateByRuleExpression(enterpriseValue, match.indexValue)
-    if (ruleResult) {
-      singleResult = ruleResult
-    } else if (enterpriseNormalized && latestNormalized) {
-      if (enterpriseNormalized === latestNormalized) {
-        singleResult = '合规'
-      } else {
-        const enterpriseNumeric = parseFirstNumber(enterpriseValue)
-        const latestNumeric = parseFirstNumber(match.indexValue)
-        if (enterpriseNumeric !== null && latestNumeric !== null) {
-          singleResult =
-            enterpriseNumeric > latestNumeric ? '不合规（高于国标）' : '不合规（低于国标）'
-        } else {
-          singleResult = '需人工判定'
-        }
-      }
-    } else {
-      singleResult = '需人工判定'
-    }
-  }
-
-  const statusText = backendMatchStatus || '已在国标指标库中找到对应项'
-  return {
-    matchedStandard: match.indexValue,
-    status: statusText,
-    nationalValue: singleResult,
-    latestStandard: `${match.standardId} / ${match.indexName}`,
-  }
 }
 
 const extractReferenceCodeRowsFromUploadPayload = (input: unknown): PendingIndexItem[] => {
@@ -464,7 +403,7 @@ const extractDescriptiveInfoFromPayload = (input: unknown) => {
 }
 
 const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, ComplianceWizardPanelProps>(
-  function ComplianceWizardPanel({ onProgressSnapshot, afterUploadSuccess }, ref) {
+  function ComplianceWizardPanel({ taskId: taskIdProp, onProgressSnapshot, afterUploadSuccess }, ref) {
     const rootRef = React.useRef<HTMLDivElement | null>(null)
     const [messageApi, contextHolder] = message.useMessage()
     const [current, setCurrent] = useState(0)
@@ -490,21 +429,30 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const [comparisonLoading, setComparisonLoading] = useState(false)
     const [oldReferenceIndexRows, setOldReferenceIndexRows] = useState<NationalIndexItem[]>([])
     const [latestReferenceIndexRows, setLatestReferenceIndexRows] = useState<NationalIndexItem[]>([])
-    const [missingOldReferenceFiles, setMissingOldReferenceFiles] = useState<string[]>([])
-    const [missingLatestReferenceFiles, setMissingLatestReferenceFiles] = useState<string[]>([])
-    /** `GET .../step/4/indicators` 返回的缺失国标（与「构建对比」并行，用于进入本步后立即展示） */
+    /** `POST .../step/4/indicators/ensure` 返回的缺失国标（须用户上传后重新编排） */
     const [step4BackendMissingGb, setStep4BackendMissingGb] = useState<MissingGbFileItem[]>([])
-    const [repairUploadFiles, setRepairUploadFiles] = useState<UploadFile[]>([])
+    const [step5StdStatuses, setStep5StdStatuses] = useState<StdCodeOrchestrationStatus[]>([])
+    const [step5NationalByStdCode, setStep5NationalByStdCode] = useState<Record<string, unknown[]>>({})
+    const [parsingStdCodes, setParsingStdCodes] = useState<string[]>([])
+    const step5ComparePairsRef = React.useRef<ReturnType<typeof buildComparePairsFromDiagnostics>>([])
+    /** ③ 涉及标准均已具备可对比指标（ensure 响应 all_ready） */
+    const [indicatorsAllReady, setIndicatorsAllReady] = useState(false)
+    const [orchestrationLoading, setOrchestrationLoading] = useState(false)
+    const [compareBackendSummary, setCompareBackendSummary] = useState('')
+    const [compareLoadedFromBackend, setCompareLoadedFromBackend] = useState(false)
     const [repairUploading, setRepairUploading] = useState(false)
     const [validityLoading, setValidityLoading] = useState(false)
     const [wizardNextLoading, setWizardNextLoading] = useState(false)
     const [backendMaxWizardIndex, setBackendMaxWizardIndex] = useState(0)
+    /** 与 GET evaluations/{id} 的 current_step 同步，用于第6步检查清单（避免仅依赖本地 UI 态） */
+    const [serverConfirmedStep, setServerConfirmedStep] = useState(1)
     const [latestStandardRows, setLatestStandardRows] = useState<StandardLatestCheckResult[]>([])
     const [validityEditingId, setValidityEditingId] = useState<string | null>(null)
     const [validityDraft, setValidityDraft] = useState<StandardLatestCheckResult | null>(null)
     const [validityReviewDecision, setValidityReviewDecision] = useState<'pending' | 'complete'>('pending')
     const [manualLatestStandardInput, setManualLatestStandardInput] = useState('')
     const [manualLatestStandardIds, setManualLatestStandardIds] = useState<string[]>([])
+    const [addManualStandardModalOpen, setAddManualStandardModalOpen] = useState(false)
     const [descriptiveReview, setDescriptiveReview] = useState<DescriptiveReviewState>({
       bzId: '',
       enterpriseName: '',
@@ -534,6 +482,9 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const lastAutoDescriptiveRef = React.useRef('')
     const bootstrapRequestIdRef = React.useRef(0)
     const runWizardBootstrapSyncRef = React.useRef<() => Promise<void>>(async () => {})
+    const validityFetchKeyRef = React.useRef('')
+    /** 本任务已成功 `POST .../step/3/supplements` 的 latest_std_code */
+    const postedSupplementStdCodesRef = React.useRef<Set<string>>(new Set())
 
     useImperativeHandle(ref, () => ({
       scrollIntoView: () => {
@@ -646,18 +597,137 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
     useEffect(() => () => clearPendingPollTimer(), [])
 
+    const applyServerConfirmedAuditFlags = (currentStep: number) => {
+      setServerConfirmedStep(currentStep)
+      if (currentStep >= 2) {
+        setDescriptiveReview((prev) =>
+          prev.decision === 'pending'
+            ? {
+                ...prev,
+                decision: 'approve',
+                updatedAt: formatAuditTime(new Date()),
+              }
+            : prev,
+        )
+      }
+      if (currentStep >= 4) {
+        setValidityReviewDecision('complete')
+      }
+      if (currentStep >= 6) {
+        setComparisonAuditPassed(true)
+      }
+    }
+
     /** 从后端刷新「可进入的最大向导步」，与 Steps 禁用态、刷新后落点一致 */
     const refreshBackendStepPolicy = async () => {
       const tid = getComplianceEvaluationTaskId()
       if (tid == null) {
         setBackendMaxWizardIndex(0)
+        setServerConfirmedStep(1)
         return
       }
       try {
         const ev = await getEvaluation(tid)
         setBackendMaxWizardIndex(backendCurrentStepToMaxWizardIndex(ev.current_step))
+        applyServerConfirmedAuditFlags(ev.current_step)
       } catch {
         setBackendMaxWizardIndex(0)
+        setServerConfirmedStep(1)
+      }
+    }
+
+    const applyStep5Hydrate = async (tid: number): Promise<boolean> => {
+      try {
+        const hydrated = await hydrateStep5Compare(tid)
+        if (!hydrated) {
+          setComparePreview([])
+          setCompareLoadedFromBackend(false)
+          return false
+        }
+        setComparePreview(hydrated.rows)
+        setCompareBackendSummary(hydrated.summary)
+        setCompareLoadedFromBackend(true)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const hydrateWizardStep = async (stepIndex: number) => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return
+      try {
+        if (stepIndex === 1) {
+          const { bzId, enterpriseName } = await hydrateDescriptiveFromStep1(tid)
+          setDescriptiveReview((prev) => ({
+            ...prev,
+            bzId: prev.bzId.trim() || bzId,
+            enterpriseName: prev.enterpriseName.trim() || enterpriseName,
+          }))
+        }
+        if (stepIndex === 2) {
+          const tables = await hydrateStep3Tables()
+          const serverStep =
+            (await getEvaluation(tid).catch(() => null))?.current_step ?? serverConfirmedStep
+          const pending = markStep3RowsApprovedIfNeeded(tables.pendingRows, serverStep)
+          const refs = markStep3RowsApprovedIfNeeded(tables.referenceRows, serverStep)
+          setPendingRows((prev) => mergeAuditStatusPreserve(prev, pending, 'enterprise'))
+          setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refs, 'reference'))
+        }
+        if (stepIndex === 3) {
+          let refs = referenceRows
+          if (refs.length === 0) {
+            const tables = await hydrateStep3Tables()
+            const serverStep =
+              (await getEvaluation(tid).catch(() => null))?.current_step ?? serverConfirmedStep
+            const pending = markStep3RowsApprovedIfNeeded(tables.pendingRows, serverStep)
+            const refRows = markStep3RowsApprovedIfNeeded(tables.referenceRows, serverStep)
+            setPendingRows((prev) => mergeAuditStatusPreserve(prev, pending, 'enterprise'))
+            setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refRows, 'reference'))
+            refs = refRows
+          }
+          if (latestStandardRows.length === 0 && refs.length > 0) {
+            const results = await hydrateStep4ValidityRows(refs)
+            setLatestStandardRows(results)
+          }
+        }
+        if (stepIndex === 4) {
+          await applyStep5Hydrate(tid)
+        }
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+      }
+    }
+
+    const navigateToWizardStep = async (next: number): Promise<boolean> => {
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        if (next > 0) {
+          messageApi.warning('请先完成上传以创建并绑定评价任务。')
+          return false
+        }
+        setBackendMaxWizardIndex(0)
+        setCurrent(0)
+        return true
+      }
+      try {
+        const ev = await getEvaluation(tid)
+        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
+        setBackendMaxWizardIndex(maxIdx)
+        applyServerConfirmedAuditFlags(ev.current_step)
+        if (next > maxIdx) {
+          messageApi.warning(
+            `后端当前为步骤 ${ev.current_step}，无法跳转到第 ${next + 1} 步。请先完成前置确认（以服务端 current_step 为准）。`,
+          )
+          return false
+        }
+        if (next === current) return true
+        setCurrent(next)
+        await hydrateWizardStep(next)
+        return true
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+        return false
       }
     }
 
@@ -681,6 +751,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
         setBackendMaxWizardIndex(maxIdx)
         setCurrent(maxIdx)
+        applyServerConfirmedAuditFlags(ev.current_step)
 
         const qb = ev.qb_code?.trim() ?? ''
         if (qb) {
@@ -690,24 +761,44 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           setDescriptiveReview((prev) => ({ ...prev, bzId: prev.bzId.trim() ? prev.bzId : qb }))
         }
 
-        setComparePreview([])
         setOldReferenceIndexRows([])
         setLatestReferenceIndexRows([])
-        setMissingOldReferenceFiles([])
-        setMissingLatestReferenceFiles([])
         setSavedMappingIds(new Set())
         setLatestStandardRows([])
         setValidityEditingId(null)
         setValidityDraft(null)
+
+        const draft = loadWizardDraft(tid)
+        const draftSummary = draft?.summaryDraft
+        if (draftSummary) {
+          setSummaryDraft((prev) => ({
+            ...prev,
+            descriptive: draftSummary.descriptive || prev.descriptive,
+            validity: draftSummary.validity || prev.validity,
+            technical: draftSummary.technical || prev.technical,
+          }))
+        }
+
+        const postedCodes = loadPostedSupplementStdCodes(tid)
+        postedSupplementStdCodesRef.current = new Set(postedCodes)
+        if (ev.current_step >= 3) {
+          setManualLatestStandardIds(loadManualSupplementStdCodes(tid))
+        } else {
+          setManualLatestStandardIds([])
+        }
 
         if (ev.current_step >= 4) {
           setValidityReviewDecision('complete')
         } else {
           setValidityReviewDecision('pending')
         }
+
         if (ev.current_step >= 5) {
-          setComparisonAuditPassed(true)
+          const hydratedOk = await applyStep5Hydrate(tid)
+          setComparisonAuditPassed(ev.current_step >= 6 || hydratedOk)
         } else {
+          setComparePreview([])
+          setCompareLoadedFromBackend(false)
           setComparisonAuditPassed(false)
         }
 
@@ -716,13 +807,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           try {
             const response = await getPendingIndexes()
             if (reqId !== bootstrapRequestIdRef.current) return
-            setPendingRows(response.data)
-            if ('referenceExtracts' in response) {
-              setReferenceRows(response.referenceExtracts ?? [])
-            } else {
-              setReferenceRows([])
-            }
-            const refs = 'referenceExtracts' in response ? (response.referenceExtracts ?? []) : []
+            const pendingMarked = markStep3RowsApprovedIfNeeded(response.data, ev.current_step)
+            const refsRaw =
+              'referenceExtracts' in response ? (response.referenceExtracts ?? []) : []
+            const refsMarked = markStep3RowsApprovedIfNeeded(refsRaw, ev.current_step)
+            setPendingRows(pendingMarked)
+            setReferenceRows(refsMarked)
+            const refs = refsMarked
             const uniq = Array.from(
               new Set(refs.map((r) => r.standardName.trim()).filter((name) => name.length > 0 && name !== '-')),
             )
@@ -743,6 +834,8 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           setPendingRows([])
           setReferenceRows([])
         }
+
+        await hydrateWizardStep(maxIdx)
       } catch {
         if (reqId !== bootstrapRequestIdRef.current) return
         setBackendMaxWizardIndex(0)
@@ -752,6 +845,12 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     }
 
     runWizardBootstrapSyncRef.current = runWizardBootstrapSync
+
+    useEffect(() => {
+      if (taskIdProp != null && Number.isFinite(taskIdProp)) {
+        setComplianceEvaluationTaskId(taskIdProp)
+      }
+    }, [taskIdProp])
 
     useEffect(() => {
       void runWizardBootstrapSyncRef.current()
@@ -1295,41 +1394,71 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       }
     }
 
-    const runReferenceValidityCheck = async () => {
-      const uniqueIds = Array.from(
-        new Set(
-          referenceRows
-            .map((item) => item.standardName)
-            .map((name) => name.trim())
-            .filter((name) => name.length > 0 && name !== '-'),
-        ),
-      )
+    const fetchReferenceValidityResults = async (options?: {
+      silent?: boolean
+      stdCodes?: string[]
+      force?: boolean
+    }) => {
+      const uniqueIds = options?.stdCodes ?? collectReferenceStdCodesForValidity(referenceRows)
       if (uniqueIds.length === 0) {
-        messageApi.warning('暂无可校验的引用标准编号，请先完成提取。')
+        setLatestStandardRows([])
+        validityFetchKeyRef.current = ''
+        if (!options?.silent) {
+          messageApi.warning('暂无可查新的引用标准编号，请先在第 3 步完成规范性引用审核。')
+        }
+        return
+      }
+      const fetchKey = uniqueIds.join('|')
+      if (!options?.force && validityFetchKeyRef.current === fetchKey && latestStandardRows.length > 0) {
         return
       }
       try {
         setValidityLoading(true)
         setSavedMappingIds(new Set())
         const { results, file_compliance_outcome } = await checkLatestStandardsBatch(uniqueIds)
+        validityFetchKeyRef.current = fetchKey
         setLatestStandardRows(results)
         setValidityReviewDecision('pending')
-        setManualLatestStandardIds([])
-        setManualLatestStandardInput('')
-        const outdatedCount = results.filter((item) => isRowCitationAutoOutdated(item)).length
-        const taskHint =
-          file_compliance_outcome != null
-            ? `（整文件：${fileComplianceOutcomeLabel(file_compliance_outcome)}）`
-            : ''
-        messageApi.success(
-          outdatedCount > 0
-            ? `校验完成，发现 ${outdatedCount} 条可自动比对且与现行主号不一致${taskHint}`
-            : `校验完成，其中自动判定与现行主号一致 ${results.filter((item) => isRowCitationAutoLatest(item)).length} 条${taskHint}`,
-        )
+        if (!options?.silent) {
+          const outdatedCount = results.filter((item) => isRowCitationAutoOutdated(item)).length
+          const taskHint =
+            file_compliance_outcome != null
+              ? `（整文件：${fileComplianceOutcomeLabel(file_compliance_outcome)}）`
+              : ''
+          messageApi.success(
+            outdatedCount > 0
+              ? `查新完成，共 ${results.length} 条；其中 ${outdatedCount} 条与现行主号不一致${taskHint}`
+              : `查新完成，共 ${results.length} 条引用标准${taskHint}`,
+          )
+        }
+      } catch (error) {
+        validityFetchKeyRef.current = ''
+        if (!options?.silent) {
+          messageApi.error(getComplianceApiErrorMessage(error))
+        }
       } finally {
         setValidityLoading(false)
       }
     }
+
+    const runReferenceValidityCheck = async () => {
+      await fetchReferenceValidityResults({ silent: false, force: true })
+    }
+
+    /** 进入第 4 步：对第 3 步已审核的规范性引用标准号自动整体查新 */
+    useEffect(() => {
+      if (current !== 3) return
+      const uniqueIds = collectReferenceStdCodesForValidity(referenceRows)
+      if (uniqueIds.length === 0) {
+        setLatestStandardRows([])
+        validityFetchKeyRef.current = ''
+        return
+      }
+      const key = uniqueIds.join('|')
+      if (validityFetchKeyRef.current === key) return
+      void fetchReferenceValidityResults({ silent: true, stdCodes: uniqueIds })
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 进入本步或引用列表变化时拉取查新
+    }, [current, referenceRows])
 
     const startEditValidityRow = (row: StandardLatestCheckResult) => {
       setValidityEditingId(row.queryBzId)
@@ -1372,36 +1501,44 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       messageApi.success('已删除该条记录。')
     }
 
-    const addManualLatestStandard = async () => {
+    const addManualLatestStandard = async (): Promise<boolean> => {
       const latestId = manualLatestStandardInput.trim()
       if (!latestId) {
         messageApi.warning('请先输入最新标准编号。')
-        return
+        return false
       }
       const existsInManual = manualLatestStandardIds.some((item) => item === latestId)
       const existsInAuto = latestStandardRows.some((item) => item.currentLatestId.trim() === latestId)
-      if (existsInManual || existsInAuto) {
+      if (
+        existsInManual ||
+        existsInAuto ||
+        postedSupplementStdCodesRef.current.has(latestId)
+      ) {
         messageApi.warning('该最新标准编号已存在，无需重复新增。')
-        return
+        return false
+      }
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        messageApi.error('缺少评价任务上下文，无法新增补充标准。')
+        return false
       }
       try {
         setValidityLoading(true)
-        const response = await getNationalIndexes({ bz_id: latestId })
-        if (response.data.length === 0) {
-          messageApi.warning('数据库中未找到该最新标准编号的指标，请先确认该标准已入库。')
-          return
-        }
-        setManualLatestStandardIds((prev) => [...prev, latestId])
+        await syncEvaluationStep3Supplements(tid, [latestId], postedSupplementStdCodesRef.current)
+        const nextManual = [...manualLatestStandardIds, latestId]
+        setManualLatestStandardIds(nextManual)
+        saveManualSupplementStdCodes(tid, nextManual)
         setManualLatestStandardInput('')
         setValidityReviewDecision('pending')
         setSummaryDraft((prev) => ({
           ...prev,
-          validity: `已新增最新标准编号 ${latestId} 并纳入比对库，可在下一步指标对比中直接检索其指标。`,
+          validity: `已新增补充标准 ${latestId}（n+m），已写入后端；提交审核 3 后将参与指标编排与技术对比。`,
         }))
-        messageApi.success(`已新增最新标准编号：${latestId}，下一步将参与指标对比。`)
+        messageApi.success(`已新增补充标准：${latestId}（已保存至服务端）`)
+        return true
       } catch (error) {
-        const text = error instanceof Error ? error.message : '新增最新标准失败'
-        messageApi.error(text)
+        messageApi.error(getComplianceApiErrorMessage(error))
+        return false
       } finally {
         setValidityLoading(false)
       }
@@ -1409,14 +1546,21 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
     const submitValidityManualReview = async () => {
       if (latestStandardRows.length === 0) {
-        messageApi.warning('请先生成或补录引用标准有效性数据。')
+        messageApi.warning('请先完成引用标准查新或补录有效性数据。')
         return
       }
-      const invalidRow = latestStandardRows.find(
+      const gbRows = latestStandardRows.filter((row) => isGbReferencedStandard(row.queryBzId))
+      const invalidGbRow = gbRows.find(
         (row) => !row.queryBzId.trim() || !row.currentLatestId.trim(),
       )
-      if (invalidRow) {
-        messageApi.warning(`存在未填写完整的行（${invalidRow.queryBzId || '未命名行'}），请先补全。`)
+      if (gbRows.length > 0 && invalidGbRow) {
+        messageApi.warning(
+          `国标引用「${invalidGbRow.queryBzId || '未命名'}」须填写「最新标准号」后方可提交；非 GB 引用（如 QB/ISO）可不填。`,
+        )
+        return
+      }
+      if (gbRows.length === 0) {
+        messageApi.warning('当前查新结果中无 GB 开头引用标准，请确认第 3 步规范性引用是否已审核通过。')
         return
       }
       try {
@@ -1426,22 +1570,18 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           messageApi.error('缺少评价任务上下文，无法提交审核 3')
           return
         }
-        const settled = await Promise.allSettled(
-          latestStandardRows.map(async (row) =>
-            saveReferenceMapping({
-              enterprise_bz_id: row.queryBzId.trim(),
-              national_bz_id: row.currentLatestId.trim(),
-            }),
-          ),
+        const latestCodesToSync = Array.from(
+          new Set([
+            ...latestStandardRows.map((row) => row.currentLatestId.trim()).filter(Boolean),
+            ...manualLatestStandardIds,
+          ]),
         )
-        const failed = settled
-          .map((result, index) => ({ result, row: latestStandardRows[index] }))
-          .filter((item) => item.result.status === 'rejected')
-        if (failed.length > 0) {
-          messageApi.error(
-            `映射入库失败 ${failed.length} 条（示例：${failed[0]?.row.queryBzId}），请检查后重试。`,
+        if (latestCodesToSync.length > 0) {
+          await syncEvaluationStep3Supplements(
+            tid,
+            latestCodesToSync,
+            postedSupplementStdCodesRef.current,
           )
-          return
         }
         await confirmEvaluationAuditStep3(tid, {
           rows: latestStandardRows.map((row) => ({
@@ -1454,8 +1594,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         })
         setSavedMappingIds(new Set(latestStandardRows.map((row) => row.queryBzId)))
       } catch (error) {
-        const text = error instanceof Error ? error.message : '批量映射入库失败'
-        messageApi.error(text)
+        messageApi.error(getComplianceApiErrorMessage(error))
         return
       } finally {
         setValidityLoading(false)
@@ -1592,12 +1731,13 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           if (tid != null) {
             try {
               const ev = await getEvaluation(tid)
-              if (ev.current_step === 4) {
-                if (!comparisonAuditPassed) {
-                  messageApi.warning('请先完成「技术指标对比」的人工审核确认，再进入总结步骤。')
-                  return
-                }
-                await confirmEvaluationAuditStep4(tid)
+              if (!compareLoadedFromBackend || comparePreview.length === 0) {
+                messageApi.warning('请先点击「构建对比预览」拉取服务端对比结果。')
+                return
+              }
+              if (ev.current_step < 6 && (!comparisonAuditPassed || !compareLoadedFromBackend)) {
+                messageApi.warning('请先点击「构建对比预览」并「人工审核通过」提交服务端审核 5，再进入总结步骤。')
+                return
               }
             } catch (error) {
               messageApi.error(getComplianceApiErrorMessage(error))
@@ -1613,34 +1753,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     }
 
     /** 顶部 Steps 与后端 `current_step` 对齐，禁止未 confirm 即跳步（接入流程指南 §1.1） */
-    const onWizardStepsChange = async (next: number): Promise<boolean> => {
-      const tid = getComplianceEvaluationTaskId()
-      if (tid == null) {
-        if (next > 0) {
-          messageApi.warning('请先完成上传以创建并绑定评价任务。')
-          return false
-        }
-        setBackendMaxWizardIndex(0)
-        setCurrent(0)
-        return true
-      }
-      try {
-        const ev = await getEvaluation(tid)
-        const maxIdx = backendCurrentStepToMaxWizardIndex(ev.current_step)
-        setBackendMaxWizardIndex(maxIdx)
-        if (next > maxIdx) {
-          messageApi.warning(
-            `后端当前为步骤 ${ev.current_step}，无法跳转到第 ${next + 1} 步。请先完成前置确认（以服务端 current_step 为准）。`,
-          )
-          return false
-        }
-        setCurrent(next)
-        return true
-      } catch (error) {
-        messageApi.error(getComplianceApiErrorMessage(error))
-        return false
-      }
-    }
+    const onWizardStepsChange = (next: number) => navigateToWizardStep(next)
 
     const startEditComparisonRow = (row: ComparePreviewRow) => {
       setComparisonEditingId(row.id)
@@ -1652,258 +1765,273 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       setComparisonDraft(null)
     }
 
+    const patchComparisonDraft = (
+      patch: Pick<Partial<ComparePreviewRow>, 'indicatorName' | 'enterpriseValue'>,
+    ) => {
+      setComparisonDraft((prev) => (prev ? { ...prev, ...patch } : prev))
+    }
+
     const saveComparisonRow = () => {
       if (!comparisonDraft || !comparisonEditingId) return
       if (!comparisonDraft.indicatorName.trim()) {
         messageApi.warning('指标名称不能为空')
         return
       }
-      const mergedDraft = {
-        ...comparisonDraft,
-        ...buildComparisonResult(
-          comparisonDraft.indicatorName.trim(),
-          comparisonDraft.enterpriseValue.trim(),
-          latestReferenceIndexRows,
+      setComparePreview((prev) =>
+        prev.map((row) =>
+          row.id === comparisonEditingId
+            ? {
+                ...row,
+                indicatorName: comparisonDraft.indicatorName.trim(),
+                enterpriseValue: comparisonDraft.enterpriseValue,
+              }
+            : row,
         ),
-      }
-      setComparePreview((prev) => prev.map((row) => (row.id === comparisonEditingId ? mergedDraft : row)))
+      )
       cancelEditComparisonRow()
-      messageApi.success('已保存技术对比行')
-    }
-
-    const removeComparisonRow = (id: string) => {
-      setComparePreview((prev) => prev.filter((row) => row.id !== id))
+      messageApi.success('已保存本行展示内容（仅指标名称与企标/旧基线值；重新构建对比将以服务端为准）')
     }
 
     const addComparisonRow = () => {
-      const id = `manual-${Date.now()}`
-      const row: ComparePreviewRow = {
-        id,
-        indicatorName: '',
-        enterpriseValue: '',
-        matchedStandard: '-',
-        nationalValue: '待确认',
-        status: '待匹配（请填写后保存）',
-        source: 'manual',
-        baselineStandard: '-',
-        latestStandard: '请填写后保存',
-      }
-      setComparePreview((prev) => [row, ...prev])
-      startEditComparisonRow(row)
+      messageApi.info('对比明细由服务端 GET step/5/compare 生成，不支持在前端手工新增对比行。')
     }
 
-    const approveComparisonResult = () => {
-      setComparisonAuditPassed(true)
-      const pendingRows = comparePreview.filter(
-        (row) =>
-          row.status.includes('待') ||
-          row.status.includes('未在国标指标库中找到') ||
-          row.status.includes('未找到'),
-      )
-      if (pendingRows.length > 0) {
-        messageApi.warning('仍有未匹配/待补充项，请确认后再作为最终结果。')
+    const approveComparisonResult = async () => {
+      if (!compareLoadedFromBackend || comparePreview.length === 0) {
+        messageApi.warning('请先点击「构建对比预览」，拉取服务端 step/5 对比结果后再审核通过。')
         return
       }
-      setSummaryDraft((prev) => ({
-        ...prev,
-        technical:
-          prev.technical.trim() ||
-          `技术指标对比完成，共 ${comparePreview.length} 条，人工审核通过。`,
-      }))
-      messageApi.success('技术指标对比已人工审核通过')
-    }
-
-    const buildComparePreview = async (options?: { diagnosticsOnly?: boolean }) => {
-      const diagnosticsOnly = options?.diagnosticsOnly === true
-      const referenceCodes = Array.from(
-        new Set(referenceRows.map((item) => item.standardName.trim()).filter((item) => item && item !== '-')),
-      )
-      if (referenceCodes.length === 0) {
-        if (!diagnosticsOnly) {
-          messageApi.warning('缺少规范性引用文件编号，无法构建技术对比。')
-        }
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        messageApi.error('缺少评价任务上下文')
         return
       }
-
       try {
         setComparisonLoading(true)
-        if (!diagnosticsOnly) {
-          setComparisonAuditPassed(false)
-        }
-
-        const [oldResponses, latestBatch] = await Promise.all([
-          Promise.all(
-            referenceCodes.map(async (code) => {
-              try {
-                return await getNationalIndexes({ bz_id: code })
-              } catch {
-                return { data: [] as NationalIndexItem[] }
-              }
-            }),
-          ),
-          checkLatestStandardsBatch(referenceCodes),
-        ])
-        const latestChecks = latestBatch.results
-
-        const oldRows = oldResponses.flatMap((response) => response.data)
-        setOldReferenceIndexRows(oldRows)
-        const missingOldFiles = referenceCodes.filter((_code, index) => (oldResponses[index]?.data?.length ?? 0) === 0)
-        setMissingOldReferenceFiles(missingOldFiles)
-
-        const latestIds = Array.from(
-          new Set([
-            ...latestChecks.map((item) => item.currentLatestId.trim()).filter((item) => item && item !== '-'),
-            ...manualLatestStandardIds,
-          ]),
-        )
-        const latestResponses = await Promise.all(
-          latestIds.map(async (id) => {
-            try {
-              return await getNationalIndexes({ bz_id: id })
-            } catch {
-              return { data: [] as NationalIndexItem[] }
-            }
-          }),
-        )
-        const latestRows = latestResponses.flatMap((response) => response.data)
-        setLatestReferenceIndexRows(latestRows)
-        const missingLatestFiles = latestIds.filter((_code, index) => (latestResponses[index]?.data?.length ?? 0) === 0)
-        setMissingLatestReferenceFiles(missingLatestFiles)
-
-        if (diagnosticsOnly) {
-          return
-        }
-
-        const enterpriseRows = pendingRows.map((item, idx) => ({
-          id: item.id || `enterprise-${idx}`,
-          standardId: item.standardName || latestUploadedBzId || '-',
-          indexName: item.indicatorName,
-          indexValue: item.indicatorValue,
-        }))
-        const oldBaselineRows = [...oldRows, ...enterpriseRows]
-
-        const previewRows: ComparePreviewRow[] = oldBaselineRows.map((item, idx) => {
-          const comparison = buildComparisonResult(item.indexName, item.indexValue, latestRows)
-          return {
-            id: item.id || `compare-${idx + 1}`,
-            indicatorName: item.indexName,
-            enterpriseValue: item.indexValue,
-            matchedStandard: comparison.matchedStandard,
-            nationalValue: comparison.nationalValue,
-            status: comparison.status,
-            source: 'enterprise_or_old',
-            baselineStandard: item.standardId,
-            latestStandard: comparison.latestStandard,
-          }
-        })
-
-        setComparePreview(previewRows)
+        await confirmEvaluationAuditStep5(tid)
+        const evAfter = await getEvaluation(tid)
+        applyServerConfirmedAuditFlags(evAfter.current_step)
+        setComparisonAuditPassed(true)
+        const summaryText =
+          compareBackendSummary.trim() ||
+          `技术指标对比完成（服务端），共 ${comparePreview.length} 条，已提交审核 5。`
         setSummaryDraft((prev) => ({
           ...prev,
-          technical:
-            prev.technical.trim() ||
-            `旧基线 ${oldBaselineRows.length} 条（旧引用 ${oldRows.length} + 企标 ${enterpriseRows.length}），最新基线 ${latestRows.length} 条。`,
+          technical: prev.technical.trim() || summaryText,
         }))
         messageApi.success(
-          `对比构建完成：旧基线 ${oldBaselineRows.length} 条，最新基线 ${latestRows.length} 条，缺失文件 ${
-            missingLatestFiles.length + missingOldFiles.length
-          } 个。`,
+          '已提交服务端审核 5。任务已记入「已完成的评价」，可从任务列表对应页签查看。',
         )
+        void refreshBackendStepPolicy()
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
       } finally {
         setComparisonLoading(false)
       }
     }
 
-    /** 进入「指标映射与技术对比」步后：立即拉取编排缺件 + 引用侧诊断，避免左上角卡牌长时间为 0 */
+    const step5ComparePairs = useMemo(() => {
+      const diagnostics = classifyStep5AuditDiagnostics(latestStandardRows, manualLatestStandardIds)
+      return buildComparePairsFromDiagnostics(diagnostics)
+    }, [latestStandardRows, manualLatestStandardIds])
+
+    step5ComparePairsRef.current = step5ComparePairs
+
+    const step5ComparePairsSignature = useMemo(
+      () => buildComparablePairsSignature(step5ComparePairs),
+      [step5ComparePairs],
+    )
+
+    const applyStep4BundleView = (
+      view: Awaited<ReturnType<typeof ensureStep4IndicatorsForCompare>>,
+    ) => {
+      setStep4BackendMissingGb(view.s4.missing_gb_files ?? [])
+      setStep5StdStatuses(view.stdStatuses ?? [])
+      setStep5NationalByStdCode(view.s4.national_by_std_code ?? {})
+      setIndicatorsAllReady(view.allReady)
+      setOldReferenceIndexRows(view.oldRows)
+      setLatestReferenceIndexRows(view.latestRows)
+    }
+
+    const refreshStep5IndicatorOrchestration = async () => {
+      if (step5ComparePairs.length === 0) {
+        setStep4BackendMissingGb([])
+        setStep5StdStatuses([])
+        setStep5NationalByStdCode({})
+        setParsingStdCodes([])
+        setIndicatorsAllReady(false)
+        setOldReferenceIndexRows([])
+        setLatestReferenceIndexRows([])
+        return
+      }
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return
+      const view = await ensureStep4IndicatorsForCompare(tid, step5ComparePairs)
+      applyStep4BundleView(view)
+    }
+
+    const buildComparePreview = async () => {
+      if (step5ComparePairs.length === 0) {
+        messageApi.warning('暂无可进行指标对比的标准，请先在第四步补全 GB 引用或补充标准。')
+        return
+      }
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        messageApi.error('缺少评价任务上下文')
+        return
+      }
+      if (!indicatorsAllReady) {
+        messageApi.warning(
+          '③ 可对比标准的相关指标尚未全部就绪，请先上传缺件国标或等待自动解析完成后再构建对比。',
+        )
+        return
+      }
+
+      try {
+        setComparisonLoading(true)
+        const evBefore = await getEvaluation(tid)
+        if (evBefore.current_step < 6) {
+          setComparisonAuditPassed(false)
+        }
+        setCompareLoadedFromBackend(false)
+
+        const view = await ensureStep4IndicatorsForCompare(tid, step5ComparePairs)
+        applyStep4BundleView(view)
+        if (!view.allReady) {
+          messageApi.error(
+            `仍有 ${(view.s4.missing_gb_files ?? []).length} 项国标文件缺失，请先上传补齐后再构建对比。`,
+          )
+          return
+        }
+
+        const { rows, compareResult } = await runBackendStep5Comparison(tid, step5ComparePairs)
+        setComparePreview(rows)
+        setCompareLoadedFromBackend(true)
+        const summary =
+          typeof compareResult.summary === 'string' ? compareResult.summary.trim() : ''
+        setCompareBackendSummary(summary)
+        setSummaryDraft((prev) => ({
+          ...prev,
+          technical:
+            prev.technical.trim() ||
+            summary ||
+            `服务端技术指标对比完成：旧基线 ${view.oldRows.length} 条，现行基线 ${view.latestRows.length} 条，对比行 ${rows.length} 条。`,
+        }))
+        if (rows.length === 0) {
+          messageApi.warning(
+            '服务端已返回对比结果，但未能解析为表格行；请查看对比摘要或联系后端检查 Dify③ 输出格式。',
+          )
+        } else {
+          messageApi.success(`已从服务端拉取对比结果，共 ${rows.length} 条。`)
+        }
+        void refreshBackendStepPolicy()
+      } catch (error) {
+        messageApi.error(getComplianceApiErrorMessage(error))
+      } finally {
+        setComparisonLoading(false)
+      }
+    }
+
+    /** 进入第五步：按 ③ compare_pairs 调用 POST step/4/indicators/ensure */
     useEffect(() => {
       if (current !== 4) {
         setStep4BackendMissingGb([])
+        setStep5StdStatuses([])
+        setStep5NationalByStdCode({})
+        setParsingStdCodes([])
+        setIndicatorsAllReady(false)
         return
       }
       let cancelled = false
       void (async () => {
-        const tid = getComplianceEvaluationTaskId()
-        if (tid == null) return
         try {
-          const ev = await getEvaluation(tid)
-          if (cancelled || ev.current_step < 4) return
-          const s4 = await getStep4Indicators(tid)
-          if (cancelled) return
-          setStep4BackendMissingGb(s4.missing_gb_files ?? [])
-        } catch {
-          if (!cancelled) setStep4BackendMissingGb([])
+          setOrchestrationLoading(true)
+          await refreshStep5IndicatorOrchestration()
+        } catch (error) {
+          if (!cancelled) {
+            messageApi.error(getComplianceApiErrorMessage(error))
+          }
+        } finally {
+          if (!cancelled) {
+            setOrchestrationLoading(false)
+          }
         }
       })()
       return () => {
         cancelled = true
       }
-    }, [current])
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- ③ 可对比标准变化时重新编排
+    }, [current, step5ComparePairsSignature])
 
-    useEffect(() => {
-      if (current !== 4) return
-      if (referenceRows.length === 0) return
-      void buildComparePreview({ diagnosticsOnly: true })
-      // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在进入本步或引用行数量变化时刷新诊断数字，避免依赖整个 buildComparePreview
-    }, [current, referenceRows.length])
+    const applyEnsureViewSilent = (
+      view: Awaited<ReturnType<typeof ensureStep4IndicatorsForCompare>>,
+    ) => {
+      applyStep4BundleView(view)
+    }
 
-    const uploadRepairReferenceFiles = async () => {
-      const files = repairUploadFiles
-        .map((item) => item.originFileObj)
-        .filter(Boolean) as File[]
-      if (files.length === 0) {
-        messageApi.warning('请先选择需要补齐的引用标准文件')
-        return
-      }
-      try {
-        setRepairUploading(true)
-        const settled = await Promise.allSettled(
-          files.map(async (file) => {
-            const [referenceResult, indexResult] = await Promise.allSettled([
-              uploadEnterpriseStandard(file),
-              postInsertIndexes(file),
-            ])
-            if (referenceResult.status === 'rejected') {
-              throw referenceResult.reason
-            }
-            const referenceError = getUploadResultError(referenceResult.value?.data)
-            if (referenceError) {
-              throw new Error(referenceError)
-            }
-            if (indexResult.status === 'fulfilled') {
-              const indexError = getUploadResultError(indexResult.value?.data)
-              if (indexError) {
-                throw new Error(indexError)
-              }
-            }
-            return file.name
-          }),
-        )
-        const successCount = settled.filter((item) => item.status === 'fulfilled').length
-        const failedCount = settled.length - successCount
-        if (failedCount > 0) {
-          messageApi.warning(`补齐上传完成：成功 ${successCount} 个，失败 ${failedCount} 个。`)
-        } else {
-          messageApi.success(`补齐上传成功，共 ${successCount} 个文件。`)
+    const pollStdOrchestrationUntilReady = async (stdCode: string) => {
+      const code = stdCode.trim()
+      if (!code) return
+      const tid = getComplianceEvaluationTaskId()
+      const pairs = step5ComparePairsRef.current
+      if (tid == null || pairs.length === 0) return
+
+      const maxAttempts = 45
+      const intervalMs = 2000
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, intervalMs))
         }
-        setRepairUploadFiles([])
-        await buildComparePreview()
+        try {
+          const view = await ensureStep4IndicatorsForCompare(tid, pairs)
+          applyEnsureViewSilent(view)
+          const lookup = buildStdOrchestrationLookup(view.stdStatuses, view.s4.missing_gb_files ?? [])
+          const info = lookup.get(code)
+          if (info?.hasIndicators) {
+            setParsingStdCodes((prev) => prev.filter((c) => c !== code))
+            messageApi.success(`${code} 指标已解析入库`)
+            return
+          }
+        } catch {
+          /* 单次轮询失败继续 */
+        }
+      }
+      setParsingStdCodes((prev) => prev.filter((c) => c !== code))
+      messageApi.warning(`${code} 解析耗时较长，请稍后查看状态或重试上传`)
+    }
+
+    const uploadRepairReferenceFiles = async (stdCode: string, file: File) => {
+      const code = stdCode.trim()
+      if (!code) {
+        messageApi.warning('请选择要补齐的标准号')
+        throw new Error('empty std code')
+      }
+      setRepairUploading(true)
+      try {
+        await uploadNationalStandard(code, file)
+        messageApi.success(`已上传国标文件：${code}，正在解析指标…`)
+        setParsingStdCodes((prev) => (prev.includes(code) ? prev : [...prev, code]))
+        void pollStdOrchestrationUntilReady(code)
       } catch (error) {
-        const text = error instanceof Error ? error.message : '补齐上传失败'
-        messageApi.error(text)
+        messageApi.error(getComplianceApiErrorMessage(error))
+        throw error
       } finally {
         setRepairUploading(false)
       }
     }
 
     const saveDraft = () => {
-      const draft = {
-        bzId: latestUploadedBzId,
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) {
+        messageApi.warning('请先创建或选择评价任务后再保存草稿')
+        return
+      }
+      saveWizardDraft({
+        taskId: tid,
         summaryDraft,
         current,
-        updatedAt: new Date().toISOString(),
-      }
-      localStorage.setItem('compliance-wizard-draft', JSON.stringify(draft))
-      messageApi.success('已保存向导草稿')
+      })
+      messageApi.success('已保存向导草稿（本机）')
     }
 
     const referenceColumns: ColumnsType<PendingIndexItem> = [
@@ -2089,99 +2217,6 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       },
     ]
 
-    const compareColumns: ColumnsType<ComparePreviewRow> = [
-      {
-        title: '指标名称',
-        dataIndex: 'indicatorName',
-        key: 'indicatorName',
-        width: 180,
-        render: (value: string, row) =>
-          comparisonEditingId === row.id ? (
-            <Input
-              size="small"
-              value={comparisonDraft?.indicatorName ?? value}
-              onChange={(event) =>
-                setComparisonDraft((prev) => (prev ? { ...prev, indicatorName: event.target.value } : prev))
-              }
-            />
-          ) : (
-            value
-          ),
-      },
-      {
-        title: '本标准指标值',
-        dataIndex: 'enterpriseValue',
-        key: 'enterpriseValue',
-        width: 220,
-        render: (value: string, row) =>
-          comparisonEditingId === row.id ? (
-            <Input.TextArea
-              autoSize={{ minRows: 1, maxRows: 3 }}
-              value={comparisonDraft?.enterpriseValue ?? value}
-              onChange={(event) =>
-                setComparisonDraft((prev) => (prev ? { ...prev, enterpriseValue: event.target.value } : prev))
-              }
-            />
-          ) : (
-            value
-          ),
-      },
-      { title: '相关比对标准指标值', dataIndex: 'matchedStandard', key: 'matchedStandard', width: 240 },
-      {
-        title: '匹配情况',
-        dataIndex: 'status',
-        key: 'status',
-        width: 190,
-        render: (status: string) => (
-          <Tag
-            color={
-              status.includes('通过') || status.includes('命中')
-                ? 'success'
-                : status.includes('已在国标指标库中找到') || status.includes('已找到')
-                  ? 'processing'
-                  : status.includes('未在国标指标库中找到') || status.includes('未找到')
-                    ? 'warning'
-                    : 'default'
-            }
-          >
-            {status}
-          </Tag>
-        ),
-      },
-      { title: '单项结果', dataIndex: 'nationalValue', key: 'nationalValue', width: 120 },
-      {
-        title: '备注',
-        key: 'note',
-        width: 220,
-        render: (_value, row) => row.latestStandard ?? '-',
-      },
-      {
-        title: '操作',
-        key: 'action',
-        width: 170,
-        render: (_value, row) =>
-          comparisonEditingId === row.id ? (
-            <Space size={6}>
-              <Button size="small" type="primary" onClick={saveComparisonRow}>
-                保存
-              </Button>
-              <Button size="small" onClick={cancelEditComparisonRow}>
-                取消
-              </Button>
-            </Space>
-          ) : (
-            <Space size={6}>
-              <Button size="small" onClick={() => startEditComparisonRow(row)}>
-                编辑
-              </Button>
-              <Button size="small" danger onClick={() => removeComparisonRow(row.id)}>
-                删除
-              </Button>
-            </Space>
-          ),
-      },
-    ]
-
     const stepGuideItems = [
       '第1步：上传企标文件并触发规范性引用、指标解析链路。',
       '第2步：描述性合规评价与第一次人工审核。',
@@ -2213,39 +2248,43 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
 
     const technicalSummary = useMemo(() => {
       const total = comparePreview.length
-      const matched = comparePreview.filter(
+      const missing = comparePreview.filter(
         (row) =>
-          row.status.includes('已在国标指标库中找到') ||
-          row.status.includes('已找到') ||
-          row.status.includes('命中'),
+          row.nationalValue.includes('缺失') || row.nationalValue.includes('⚠'),
       ).length
-      const unmatched = total - matched
-      const compliant = comparePreview.filter((row) => row.nationalValue.trim() === '合规').length
+      const compliant = comparePreview.filter(
+        (row) => row.nationalValue.includes('合规') && !row.nationalValue.includes('不合规'),
+      ).length
       const nonCompliant = comparePreview.filter((row) => row.nationalValue.includes('不合规')).length
-      const manual = Math.max(total - compliant - nonCompliant, 0)
-      return { total, matched, unmatched, compliant, nonCompliant, manual }
+      const other = Math.max(total - missing - compliant - nonCompliant, 0)
+      return {
+        total,
+        matched: compliant,
+        unmatched: missing,
+        compliant,
+        nonCompliant,
+        manual: other,
+      }
     }, [comparePreview])
 
     const step3ManualAuditSummary = useMemo(() => {
       const allRows = [...referenceRows, ...pendingRows]
       const total = allRows.length
-      const pending = allRows.filter((row) => {
-        const text = row.statusText || ''
-        return text.includes('待') || text.includes('解析') || text.includes('确认')
-      }).length
+      const pending = allRows.filter((row) => isStep3RowPendingAudit(row.statusText)).length
+      const localRowsAllApproved = total > 0 && pending === 0
       return {
         total,
         pending,
-        completed: total > 0 && pending === 0,
+        completed: isExtractAuditSatisfied(serverConfirmedStep, localRowsAllApproved),
       }
-    }, [pendingRows, referenceRows])
+    }, [pendingRows, referenceRows, serverConfirmedStep])
 
     const reportChecklist = useMemo(
       () => [
         {
           key: 'step2Audit',
           label: '第2步人工审核已完成（描述性合规评价）',
-          ok: descriptiveReview.decision !== 'pending',
+          ok: isDescriptiveAuditSatisfied(serverConfirmedStep, descriptiveReview.decision),
           targetStep: 1,
           actionText: '去第2步处理',
         },
@@ -2259,14 +2298,18 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         {
           key: 'step4Audit',
           label: '第4步人工审核已完成（引用标准有效性与更替）',
-          ok: validitySummary.total > 0 && validityReviewDecision === 'complete',
+          ok: isValidityAuditSatisfied(
+            serverConfirmedStep,
+            validityReviewDecision === 'complete',
+            validitySummary.total,
+          ),
           targetStep: 3,
           actionText: '去第4步处理',
         },
         {
           key: 'step5Audit',
           label: '第5步人工审核已完成（指标映射与技术对比）',
-          ok: comparisonAuditPassed,
+          ok: isCompareAuditSatisfied(serverConfirmedStep, comparisonAuditPassed),
           targetStep: 4,
           actionText: '去第5步处理',
         },
@@ -2274,6 +2317,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
       [
         comparisonAuditPassed,
         descriptiveReview.decision,
+        serverConfirmedStep,
         step3ManualAuditSummary.completed,
         validitySummary.total,
         validityReviewDecision,
@@ -2284,10 +2328,14 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const stepCompletion = useMemo(
       () => [
         referenceRows.length + pendingRows.length > 0 || latestUploadedBzIds.length > 0 || !!latestUploadedBzId,
-        descriptiveReview.decision !== 'pending',
+        isDescriptiveAuditSatisfied(serverConfirmedStep, descriptiveReview.decision),
         step3ManualAuditSummary.completed,
-        validitySummary.total > 0 && validityReviewDecision === 'complete',
-        comparisonAuditPassed,
+        isValidityAuditSatisfied(
+          serverConfirmedStep,
+          validityReviewDecision === 'complete',
+          validitySummary.total,
+        ),
+        isCompareAuditSatisfied(serverConfirmedStep, comparisonAuditPassed),
         reportReady,
       ],
       [
@@ -2298,6 +2346,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         pendingRows.length,
         referenceRows.length,
         reportReady,
+        serverConfirmedStep,
         step3ManualAuditSummary.completed,
         validityReviewDecision,
         validitySummary.total,
@@ -2310,6 +2359,42 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
     const [focusChecklistKey, setFocusChecklistKey] = useState('')
     const previousChecklistStateRef = React.useRef<Record<string, boolean> | null>(null)
     const previousPendingChecklistKeyRef = React.useRef<string | null>(null)
+
+    /** 进入第6步：按服务端 current_step 同步审核标记，并补齐展示用数据 */
+    useEffect(() => {
+      if (current !== 5) return
+      const tid = getComplianceEvaluationTaskId()
+      if (tid == null) return
+      let cancelled = false
+      void (async () => {
+        try {
+          const ev = await getEvaluation(tid)
+          if (cancelled) return
+          applyServerConfirmedAuditFlags(ev.current_step)
+          if (ev.current_step >= 4 && latestStandardRows.length === 0) {
+            const tables = await hydrateStep3Tables()
+            const refs = markStep3RowsApprovedIfNeeded(tables.referenceRows, ev.current_step)
+            if (cancelled) return
+            setReferenceRows((prev) => mergeAuditStatusPreserve(prev, refs, 'reference'))
+            if (refs.length > 0) {
+              const results = await hydrateStep4ValidityRows(refs)
+              if (!cancelled) setLatestStandardRows(results)
+            }
+          }
+          if (ev.current_step >= 5) {
+            await applyStep5Hydrate(tid)
+          }
+        } catch (error) {
+          if (!cancelled) {
+            messageApi.error(getComplianceApiErrorMessage(error))
+          }
+        }
+      })()
+      return () => {
+        cancelled = true
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 进入总结步时按 task 拉一次服务端态
+    }, [current])
 
     useEffect(() => {
       if (current !== 5) return
@@ -2516,6 +2601,17 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                               setDescriptiveReview((prev) => ({ ...prev, enterpriseName: event.target.value }))
                             }
                           />
+                          {getComplianceEvaluationTaskId() != null ? (
+                            <Link
+                              to={`/compliance/evaluations/${getComplianceEvaluationTaskId()}/document`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              查看当前评价企标正文（新窗口）
+                            </Link>
+                          ) : (
+                            <Text type="secondary">上传企标并创建任务后可查看正文对照</Text>
+                          )}
                           <div>
                             <Text type="secondary">是否合规</Text>
                             <div style={{ marginTop: 6 }}>
@@ -2727,10 +2823,10 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
               {current === 3 ? (
                 <Space direction="vertical" style={{ width: '100%' }} size={16}>
                   <Alert
-                    type="warning"
+                    type="info"
                     showIcon
                     message="引用标准有效性与更替"
-                    description="先判断引用标准是否过期，再由人工审核数据是否完整；可新增最新标准编号并纳入下一步指标对比。"
+                    description="进入本步将自动对第 3 步已审核的规范性引用标准号执行整体查新。「新增最新标准」将调用 POST step/3/supplements 写入 n+m 补充行。提交时补全 GB 国标的「最新标准号」并确认审核 3。"
                   />
                   {validitySummary.unresolvedLibrary > 0 ? (
                     <Alert
@@ -2739,35 +2835,41 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                       message={`当前有 ${validitySummary.unresolvedLibrary} 条在国标历史库中未能推断到企标制定时点对应的版本，请结合「发布时引用的完整的企标号」与「说明 / 谱系」列核对后再确认。`}
                     />
                   ) : null}
-                  <Space wrap>
-                    <Button type="primary" loading={validityLoading} onClick={runReferenceValidityCheck}>
-                      生成引用标准有效性与更替信息
-                    </Button>
-                    <Input
-                      placeholder="输入新增最新标准编号（如 GB/T601-2020）"
-                      value={manualLatestStandardInput}
-                      style={{ width: 260 }}
-                      onChange={(event) => setManualLatestStandardInput(event.target.value)}
-                    />
-                    <Button onClick={addManualLatestStandard}>新增最新标准</Button>
-                    <Button
-                      type="primary"
-                      ghost
-                      onClick={submitValidityManualReview}
-                    >
-                      人工审核数据完整并存入映射
-                    </Button>
-                    <Tag
-                      color={validityReviewDecision === 'complete' ? 'success' : 'default'}
-                    >
-                      {validityReviewDecision === 'complete'
-                        ? '人工审核：数据完整并已映射入库'
-                        : '人工判定：待确认'}
-                    </Tag>
-                  </Space>
+                  <Card size="small" styles={{ body: { padding: '12px 16px' } }}>
+                    <Space wrap align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space wrap align="center">
+                        <Text strong style={{ fontSize: 15 }}>
+                          查新结果
+                        </Text>
+                        <Tag color="blue">
+                          {validityLoading ? '加载中…' : `共 ${latestStandardRows.length} 条`}
+                        </Tag>
+                        {collectReferenceStdCodesForValidity(referenceRows).length > 0 ? (
+                          <Text type="secondary" style={{ fontSize: 13 }}>
+                            来源：第 3 步 {collectReferenceStdCodesForValidity(referenceRows).length}{' '}
+                            个引用标准号
+                          </Text>
+                        ) : null}
+                      </Space>
+                      <Space wrap>
+                        <Button loading={validityLoading} onClick={() => void runReferenceValidityCheck()}>
+                          刷新查新结果
+                        </Button>
+                        <Button onClick={() => setAddManualStandardModalOpen(true)}>新增最新标准</Button>
+                        <Button type="primary" onClick={() => void submitValidityManualReview()}>
+                          人工审核数据完整并存入映射
+                        </Button>
+                        <Tag color={validityReviewDecision === 'complete' ? 'success' : 'default'}>
+                          {validityReviewDecision === 'complete'
+                            ? '人工审核：已映射入库'
+                            : '人工判定：待确认'}
+                        </Tag>
+                      </Space>
+                    </Space>
+                  </Card>
                   {manualLatestStandardIds.length > 0 ? (
                     <div>
-                      <Text type="secondary">已新增最新标准编号（将参与下一步指标对比）：</Text>
+                      <Text type="secondary">已新增 n+m 补充标准（已写入后端，将参与下一步指标对比）：</Text>
                       <div style={{ marginTop: 6 }}>
                         <Space size={[6, 6]} wrap>
                           {manualLatestStandardIds.map((item) => (
@@ -2788,164 +2890,100 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
                     onCancelEdit={cancelEditValidityRow}
                     onStartEdit={startEditValidityRow}
                     onDeleteRow={removeValidityRow}
-                    emptyText="点击上方按钮后生成有效性与更替输出"
+                    emptyText={
+                      validityLoading
+                        ? '正在对第 3 步引用标准执行查新…'
+                        : '暂无查新结果，请先在第 3 步完成规范性引用审核，或点击「刷新查新结果」'
+                    }
                   />
+                  <Modal
+                    title="新增最新标准"
+                    open={addManualStandardModalOpen}
+                    okText="确认新增"
+                    cancelText="取消"
+                    confirmLoading={validityLoading}
+                    destroyOnClose
+                    onCancel={() => {
+                      setAddManualStandardModalOpen(false)
+                      setManualLatestStandardInput('')
+                    }}
+                    onOk={async () => {
+                      const ok = await addManualLatestStandard()
+                      if (ok) setAddManualStandardModalOpen(false)
+                    }}
+                  >
+                    <Form layout="vertical" style={{ marginTop: 8 }}>
+                      <Form.Item
+                        label="最新标准编号"
+                        required
+                        extra="确认后立即调用 POST /step/3/supplements 写入服务端；指标是否在库将在完成审核 3 后由步骤 4 编排展示。"
+                      >
+                        <Input
+                          placeholder="例如 GB/T 601-2020"
+                          value={manualLatestStandardInput}
+                          onChange={(event) => setManualLatestStandardInput(event.target.value)}
+                          onPressEnter={() => void addManualLatestStandard()}
+                        />
+                      </Form.Item>
+                    </Form>
+                  </Modal>
                 </Space>
               ) : null}
 
               {current === 4 ? (
-                <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                  <Row gutter={[12, 12]}>
-                    <Col xs={24} xl={13}>
-                      <Card
-                        size="small"
-                        title="查找诊断与缺失信息"
-                        style={{ borderRadius: 10, border: '1px solid #eaf0f6' }}
-                      >
-                        <Row gutter={[8, 8]}>
-                          <Col span={8}>
-                            <Card size="small" styles={{ body: { padding: 10 } }}>
-                              <Text type="secondary">旧引用指标</Text>
-                              <div style={{ fontSize: 20, fontWeight: 700 }}>{oldReferenceIndexRows.length}</div>
-                            </Card>
-                          </Col>
-                          <Col span={8}>
-                            <Card size="small" styles={{ body: { padding: 10 } }}>
-                              <Text type="secondary">最新引用指标</Text>
-                              <div style={{ fontSize: 20, fontWeight: 700 }}>{latestReferenceIndexRows.length}</div>
-                            </Card>
-                          </Col>
-                          <Col span={8}>
-                            <Card size="small" styles={{ body: { padding: 10 } }}>
-                              <Text type="secondary">技术对比条数</Text>
-                              <div style={{ fontSize: 20, fontWeight: 700 }}>{comparePreview.length}</div>
-                            </Card>
-                          </Col>
-                        </Row>
-                        <div style={{ marginTop: 10 }}>
-                          <Text strong>数据库未命中的旧引用标准编号：</Text>
-                          <div style={{ marginTop: 6 }}>
-                            {missingOldReferenceFiles.length > 0 ? (
-                              <Space size={[6, 6]} wrap>
-                                {missingOldReferenceFiles.map((item) => (
-                                  <Tag key={item} color="warning">
-                                    {item}
-                                  </Tag>
-                                ))}
-                              </Space>
-                            ) : (
-                              <Text type="secondary">无（旧引用标准都已在库中找到）</Text>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ marginTop: 10 }}>
-                          <Text strong>数据库未命中的最新标准编号（更替后）：</Text>
-                          <div style={{ marginTop: 6 }}>
-                            {missingLatestReferenceFiles.length > 0 ? (
-                              <Space size={[6, 6]} wrap>
-                                {missingLatestReferenceFiles.map((item) => (
-                                  <Tag key={item} color="error">
-                                    {item}
-                                  </Tag>
-                                ))}
-                              </Space>
-                            ) : (
-                              <Text type="secondary">无（最新标准都已在库中找到）</Text>
-                            )}
-                          </div>
-                        </div>
-                        {step4BackendMissingGb.length > 0 ? (
-                          <div style={{ marginTop: 12 }}>
-                            <Text strong>编排侧缺件（接口 step/4，未配置国标文件路径）：</Text>
-                            <div style={{ marginTop: 6 }}>
-                              <Space size={[6, 6]} wrap>
-                                {step4BackendMissingGb.map((item) => (
-                                  <Tag key={item.std_code} color="volcano">
-                                    {item.std_code}
-                                    {item.std_name ? ` ${item.std_name}` : ''}
-                                  </Tag>
-                                ))}
-                              </Space>
-                            </div>
-                            <Text type="secondary" style={{ display: 'block', marginTop: 6 }}>
-                              上述项会导致「下一步」审核 4 确认失败，请先在本页上传补齐或联系管理员配置服务器路径。
-                            </Text>
-                          </div>
-                        ) : null}
-                      </Card>
-                    </Col>
-                    <Col xs={24} xl={11}>
-                      <Card
-                        size="small"
-                        title="引用标准补齐工具"
-                        style={{ borderRadius: 10, border: '1px solid #eaf0f6' }}
-                      >
-                        <Alert
-                          type="info"
-                          showIcon
-                          message="批量上传缺失引用标准文件"
-                          description="上传后将调用解析链路并回填指标，再重新构建技术对比。"
-                          style={{ marginBottom: 10 }}
-                        />
-                        <Upload
-                          multiple
-                          maxCount={10}
-                          beforeUpload={() => false}
-                          fileList={repairUploadFiles}
-                          onChange={({ fileList: next }) => setRepairUploadFiles(next)}
-                        >
-                          <Button icon={<UploadOutlined />}>选择引用标准文件</Button>
-                        </Upload>
-                        <Button
-                          type="primary"
-                          style={{ marginTop: 10, width: '100%' }}
-                          loading={repairUploading}
-                          onClick={uploadRepairReferenceFiles}
-                        >
-                          上传并解析补齐
-                        </Button>
-                        <div style={{ marginTop: 12 }}>
-                          <Text type="secondary">
-                            补齐后可再次点击“构建对比预览”刷新结果。
-                          </Text>
-                        </div>
-                      </Card>
-                    </Col>
-                  </Row>
-
-                  <Card
-                    size="small"
-                    title="技术指标对比表"
-                    style={{ borderRadius: 10, border: '1px solid #eaf0f6' }}
-                  >
-                    <Space wrap style={{ marginBottom: 12 }}>
-                      <Button type="primary" loading={comparisonLoading} onClick={buildComparePreview}>
-                        构建对比预览
-                      </Button>
-                      <Button onClick={addComparisonRow}>新增行</Button>
-                      <Button type="primary" ghost onClick={approveComparisonResult}>
-                        人工审核通过
-                      </Button>
-                      {comparisonAuditPassed ? <Tag color="success">已通过人工审核</Tag> : null}
-                    </Space>
-                    <Text type="secondary">
-                      “新增行”用于手动补录指标。填写“指标名称 + 本标准指标值”并保存后，系统会自动尝试匹配后端国标指标库。
-                    </Text>
-                    <Table
-                      rowKey="id"
-                      dataSource={comparePreview}
-                      columns={compareColumns}
-                      pagination={{ pageSize: 8, showSizeChanger: false }}
-                      loading={comparisonLoading}
-                      locale={{ emptyText: '请先点击「构建对比预览」' }}
-                      scroll={{ x: 1120 }}
-                    />
-                  </Card>
-                </Space>
+                <TechnicalComparisonStep
+                  enterpriseBzId={
+                    descriptiveReview.bzId.trim() ||
+                    latestUploadedBzId.trim() ||
+                    reportBzId.trim()
+                  }
+                  enterpriseQbIndicators={pendingRows}
+                  referenceCount={
+                    new Set(
+                      referenceRows.map((r) => r.standardName.trim()).filter((n) => n && n !== '-'),
+                    ).size
+                  }
+                  supplementCount={manualLatestStandardIds.length}
+                  comparePreview={comparePreview}
+                  comparisonLoading={comparisonLoading}
+                  comparisonAuditPassed={comparisonAuditPassed}
+                  latestStandardRows={latestStandardRows}
+                  supplementStdCodes={manualLatestStandardIds}
+                  step4BackendMissingGb={step4BackendMissingGb}
+                  step5StdStatuses={step5StdStatuses}
+                  step5NationalByStdCode={step5NationalByStdCode}
+                  parsingStdCodes={parsingStdCodes}
+                  indicatorsAllReady={indicatorsAllReady}
+                  orchestrationLoading={orchestrationLoading}
+                  comparablePairCount={step5ComparePairs.length}
+                  repairUploading={repairUploading}
+                  taskId={getComplianceEvaluationTaskId()}
+                  onOrchestrationRefreshed={() => void refreshStep5IndicatorOrchestration()}
+                  comparisonEditingId={comparisonEditingId}
+                  comparisonDraft={comparisonDraft}
+                  onBuildComparePreview={() => void buildComparePreview()}
+                  onAddComparisonRow={addComparisonRow}
+                  compareBackendSummary={compareBackendSummary}
+                  compareLoadedFromBackend={compareLoadedFromBackend}
+                  onApproveComparison={() => void approveComparisonResult()}
+                  onRepairUpload={uploadRepairReferenceFiles}
+                  onStartEdit={startEditComparisonRow}
+                  onSaveRow={saveComparisonRow}
+                  onCancelEdit={cancelEditComparisonRow}
+                  onDraftChange={patchComparisonDraft}
+                />
               ) : null}
 
               {current === 5 ? (
                 <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                  {serverConfirmedStep < 6 ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="本任务尚未记入「已完成的评价」"
+                      description="向导第 6 步仅用于总结与导出报告。请返回第 5 步，在「构建对比预览」后点击「人工审核通过」提交审核 5；成功后任务会出现在任务列表的「已完成的评价」页签中。"
+                    />
+                  ) : null}
                   <Alert
                     type="success"
                     showIcon
@@ -3214,7 +3252,12 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
           <Row justify="space-between" align="middle" gutter={[12, 12]}>
             <Col>
               <Space wrap>
-                <Button disabled={current === 0} onClick={() => setCurrent((prev) => Math.max(0, prev - 1))}>
+                <Button
+                  disabled={current === 0}
+                  onClick={() => {
+                    if (current > 0) void navigateToWizardStep(current - 1)
+                  }}
+                >
                   上一步
                 </Button>
                 <Button

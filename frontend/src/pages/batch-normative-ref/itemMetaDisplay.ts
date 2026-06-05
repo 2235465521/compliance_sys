@@ -20,6 +20,28 @@ export function pickCompanyForItem(item: BatchNormativeRefItemOut | null, job: B
   return ''
 }
 
+/** 企业所在地（省/市等），用于通报头与名单行尾标注 */
+export function pickLocationForItem(item: BatchNormativeRefItemOut | null): string {
+  return (
+    pickItemStringField(item, [
+      'province',
+      'province_name',
+      'provinceName',
+      'city',
+      'city_name',
+      'cityName',
+      'region',
+      'region_name',
+      'regionName',
+      'location',
+      'area',
+      'enterprise_region',
+      'enterpriseRegion',
+      '所在地',
+    ]) || ''
+  )
+}
+
 /** 企标简称 / 常用名：qb_name 优先，其次 enterprise_standard_name */
 export function pickQbShortName(item: BatchNormativeRefItemOut | null): string {
   return (

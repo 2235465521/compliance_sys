@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { BatchNormativeRefJobOut } from '@/types/batch-normative-ref'
 import { getBatchNormativeRefJob } from '@/services/batch-normative-reference'
+import { shouldPollBatchNormativeRefJob } from '@/pages/batch-normative-ref/batchJobProgress'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
-
-const TERMINAL = new Set(['completed', 'failed'])
 
 export function useBatchNormativeRefJobPoll(jobId: number | null, options?: { intervalMs?: number }) {
   const [job, setJob] = useState<BatchNormativeRefJobOut | null>(null)
@@ -11,24 +10,28 @@ export function useBatchNormativeRefJobPoll(jobId: number | null, options?: { in
   const [error, setError] = useState<string | null>(null)
   const intervalMs = options?.intervalMs ?? 2000
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const firstLoadRef = useRef(true)
 
   useEffect(() => {
     if (jobId == null || !Number.isFinite(jobId)) {
       setJob(null)
       setError(null)
+      firstLoadRef.current = true
       return
     }
 
     let cancelled = false
+    firstLoadRef.current = true
 
     const tick = async () => {
+      const isFirst = firstLoadRef.current
       try {
-        setLoading(true)
+        if (isFirst) setLoading(true)
         setError(null)
         const j = await getBatchNormativeRefJob(jobId)
         if (cancelled) return
         setJob(j)
-        if (TERMINAL.has(j.status) && timerRef.current) {
+        if (!shouldPollBatchNormativeRefJob(j) && timerRef.current) {
           clearInterval(timerRef.current)
           timerRef.current = null
         }
@@ -37,7 +40,12 @@ export function useBatchNormativeRefJobPoll(jobId: number | null, options?: { in
           setError(getComplianceApiErrorMessage(e))
         }
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          if (isFirst) {
+            setLoading(false)
+            firstLoadRef.current = false
+          }
+        }
       }
     }
 

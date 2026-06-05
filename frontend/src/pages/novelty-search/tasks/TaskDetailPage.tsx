@@ -1,6 +1,4 @@
 import { ArrowLeftOutlined, FilePdfOutlined } from '@ant-design/icons'
-import type { ProColumns } from '@ant-design/pro-components'
-import { ProTable } from '@ant-design/pro-components'
 import {
   Alert,
   App,
@@ -9,7 +7,6 @@ import {
   Descriptions,
   Empty,
   Input,
-  Progress,
   Space,
   Spin,
   Steps,
@@ -19,36 +16,37 @@ import {
   Tooltip,
   Typography,
 } from 'antd'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { NoveltyCompareResultTable } from '@/pages/novelty-search/components/NoveltyCompareResultTable'
+import { NoveltyIndicatorsPanel } from '@/pages/novelty-search/components/NoveltyIndicatorsPanel'
+import { NoveltyTaskConclusionAlert } from '@/pages/novelty-search/components/NoveltyTaskConclusionAlert'
+import { useNoveltyTaskPoll } from '@/pages/novelty-search/hooks/useNoveltyTaskPoll'
 import {
   confirmReferenceSheet,
-  requestReportPdf,
-  runDemoParsingSequence,
+  NoveltySearchApiError,
   saveReferenceSheetDraft,
 } from '@/services/novelty-search'
-import { useNoveltyStore } from '@/stores/novelty-search'
-import { markParsingDemoScheduled } from '@/pages/novelty-search/utils/parsing-demo-scheduled'
-import type { CompareConclusion, CompareRow, NoveltyTask, ReferenceSheetRow } from '@/types/novelty-search'
+import type { NoveltyTask, NoveltyTaskStatus, ReferenceSheetRow } from '@/types/novelty-search'
 
-const CONCLUSION_META: Record<
-  CompareConclusion,
-  { label: string; color: 'success' | 'error' | 'warning' | 'default' | 'processing' }
-> = {
-  active: { label: '现行有效', color: 'success' },
-  obsolete: { label: '已废止', color: 'error' },
-  incoming: { label: '即将实施', color: 'warning' },
-  unknown: { label: '待核定', color: 'default' },
-  pending: { label: '待比对', color: 'processing' },
+const STATUS_LABEL: Record<NoveltyTaskStatus, string> = {
+  queued: '排队',
+  loading_history: '汇聚历史',
+  parsing: '解析中',
+  pending_confirm: '待确认专用表',
+  comparing: '比对中',
+  completed: '已完成',
+  failed: '失败',
 }
 
 function stepsForTask(task: NoveltyTask): { current: number; status?: 'error' } {
   if (task.status === 'failed') {
-    const atParse = task.errorSummary?.includes('解析')
+    const atParse = task.errorSummary?.includes('解析') || task.errorSummary?.includes('汇聚')
     return { current: atParse ? 1 : 3, status: 'error' }
   }
-  const map: Record<NoveltyTask['status'], number> = {
+  const map: Record<NoveltyTaskStatus, number> = {
     queued: 0,
+    loading_history: 1,
     parsing: 1,
     pending_confirm: 2,
     comparing: 3,
@@ -62,33 +60,15 @@ export default function TaskDetailPage() {
   const { taskId } = useParams<{ taskId: string }>()
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
-
-  const task = useNoveltyStore(
-    useCallback((s) => (taskId ? s.tasks.find((t) => t.id === taskId) : undefined), [taskId]),
-  )
+  const { task, setTask, loading, error, reload } = useNoveltyTaskPoll(taskId)
 
   const [sheetDraft, setSheetDraft] = useState<ReferenceSheetRow[]>([])
   const [saving, setSaving] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  const [reportBusy, setReportBusy] = useState(false)
-
   useEffect(() => {
-    if (!task || task.status !== 'parsing' || task.source !== 'upload') return
-    if (!markParsingDemoScheduled(task.id)) return
-    void runDemoParsingSequence(task.id).catch(() => {
-      message.error('演示解析失败')
-    })
-  }, [message, task])
-
-  useEffect(
-    () => {
-      if (!task) return
-      setSheetDraft(task.referenceSheet.map((r) => ({ ...r })))
-    },
-    // 仅在任务切换或专用表引用变化时同步，避免依赖整个 task 导致比对进度更新时误重置编辑中草稿
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [task?.id, task?.referenceSheet],
-  )
+    if (!task) return
+    setSheetDraft(task.referenceSheet.map((r) => ({ ...r })))
+  }, [task?.id, task?.referenceSheet])
 
   const stepCfg = useMemo(() => (task ? stepsForTask(task) : { current: 0 }), [task])
 
@@ -96,8 +76,11 @@ export default function TaskDetailPage() {
     if (!taskId) return
     setSaving(true)
     try {
-      await saveReferenceSheetDraft(taskId, sheetDraft)
-      message.success('草稿已保存（演示）')
+      const updated = await saveReferenceSheetDraft(taskId, sheetDraft)
+      setTask(updated)
+      message.success('草稿已保存')
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '保存失败')
     } finally {
       setSaving(false)
     }
@@ -107,15 +90,21 @@ export default function TaskDetailPage() {
     if (!taskId || !task) return
     modal.confirm({
       title: '确认专用表并进入比对？',
-      content: '确认后将按当前表格发起演示比对流水线。真实环境由后端编排。',
+      content: '确认后将按表中引用标准执行三列查新（补全年代号 / 首次查新最新号 / 本次最新号）。',
       okText: '确认',
       cancelText: '取消',
       onOk: async () => {
         setConfirming(true)
         try {
-          await saveReferenceSheetDraft(taskId, sheetDraft)
-          await confirmReferenceSheet(taskId)
-          message.success('已确认，正在比对（演示）…')
+          const updated = await confirmReferenceSheet(taskId, sheetDraft)
+          setTask(updated)
+          message.success(updated.taskSummary ? `比对完成：${updated.taskSummary}` : '比对完成')
+        } catch (e) {
+          if (e instanceof NoveltySearchApiError && e.status === 422) {
+            message.error(e.message)
+          } else {
+            message.error(e instanceof Error ? e.message : '确认失败')
+          }
         } finally {
           setConfirming(false)
         }
@@ -123,67 +112,22 @@ export default function TaskDetailPage() {
     })
   }
 
-  const onGeneratePdf = async () => {
-    if (!taskId) return
-    setReportBusy(true)
-    try {
-      await requestReportPdf(taskId)
-      message.success('报告已生成（演示）')
-    } catch {
-      message.error('生成失败（演示）')
-    } finally {
-      setReportBusy(false)
-    }
-  }
-
-  const compareColumns: ProColumns<CompareRow>[] = [
-    { title: '标准号', dataIndex: 'stdNo', width: 140, ellipsis: true },
-    { title: '标准名称', dataIndex: 'stdName', ellipsis: true },
-    {
-      title: '库内存在',
-      dataIndex: 'existsInDb',
-      width: 100,
-      render: (_, r) => (r.existsInDb ? <Tag color="blue">是</Tag> : <Tag color="red">否</Tag>),
-    },
-    {
-      title: '结论',
-      dataIndex: 'conclusion',
-      width: 110,
-      render: (_, r) => {
-        const m = CONCLUSION_META[r.conclusion]
-        return <Tag color={m.color}>{m.label}</Tag>
-      },
-    },
-    {
-      title: '替代标准',
-      search: false,
-      ellipsis: true,
-      render: (_, r) =>
-        r.replacementNo ? (
-          <Typography.Text>
-            {r.replacementNo} {r.replacementName ? `· ${r.replacementName}` : ''}
-          </Typography.Text>
-        ) : (
-          '—'
-        ),
-    },
-    {
-      title: '异常',
-      dataIndex: 'rowError',
-      ellipsis: true,
-      search: false,
-      render: (t) => t || '—',
-    },
-  ]
-
   if (!taskId) {
     return <Empty description="缺少任务 ID" />
+  }
+
+  if (loading && !task) {
+    return (
+      <div style={{ padding: 48, textAlign: 'center' }}>
+        <Spin size="large" tip="加载任务…" />
+      </div>
+    )
   }
 
   if (!task) {
     return (
       <div style={{ padding: 24 }}>
-        <Empty description="未找到该任务（可能已刷新导致演示数据丢失）">
+        <Empty description={error ?? '未找到该任务'}>
           <Button type="primary" onClick={() => navigate('/novelty-search')}>
             返回任务列表
           </Button>
@@ -192,21 +136,11 @@ export default function TaskDetailPage() {
     )
   }
 
-  const compareDisabled = !task.sheetConfirmed && task.status !== 'comparing' && task.status !== 'completed'
-  const totalRows = task.referenceSheet.length
-  const compareProgress =
-    task.status === 'comparing' && totalRows > 0 ? Math.round((task.compareDone / totalRows) * 100) : undefined
+  const compareDisabled = task.status !== 'completed' || task.compareRows.length === 0
+  const totalRows = task.compareTotal || task.referenceSheet.length
 
   return (
     <div style={{ padding: 24, maxWidth: 1280, margin: '0 auto' }}>
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message="工作台为前端演示"
-        description="任务阶段、专用表、比对与报告均来自 Mock Store；与标准库 HTTP、WebSocket 未绑定。对接后端后请替换 services/novelty-search.ts。"
-      />
-
       <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Space align="center" wrap>
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/novelty-search')}>
@@ -215,12 +149,12 @@ export default function TaskDetailPage() {
           <Typography.Title level={4} style={{ margin: 0 }}>
             {task.title}
           </Typography.Title>
+          <Tag>{STATUS_LABEL[task.status]}</Tag>
           <Tag>{task.id}</Tag>
         </Space>
 
         <Card size="small">
           <Descriptions size="small" column={{ xs: 1, sm: 2, md: 3 }} style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="企业">{task.enterpriseName?.trim() || '—'}</Descriptions.Item>
             <Descriptions.Item label="企标号">{task.enterpriseStdNo}</Descriptions.Item>
             <Descriptions.Item label="任务标题">{task.title}</Descriptions.Item>
             <Descriptions.Item label="来源">
@@ -230,7 +164,16 @@ export default function TaskDetailPage() {
                   ? '上传国标'
                   : '标准号录入'}
             </Descriptions.Item>
-            <Descriptions.Item label="创建时间">{task.createdAt.replace('T', ' ').slice(0, 19)}</Descriptions.Item>
+            <Descriptions.Item label="创建时间">
+              {task.createdAt.replace('T', ' ').slice(0, 19)}
+            </Descriptions.Item>
+            {task.sourceEvaluations && task.sourceEvaluations.length > 0 ? (
+              <Descriptions.Item label="历史评价来源" span={3}>
+                {task.sourceEvaluations
+                  .map((s) => `${s.title} (#${s.sourceId})`)
+                  .join('；')}
+              </Descriptions.Item>
+            ) : null}
           </Descriptions>
           <Steps
             size="small"
@@ -238,13 +181,17 @@ export default function TaskDetailPage() {
             status={stepCfg.status}
             items={[
               { title: '排队' },
-              { title: '解析中' },
+              { title: '汇聚/解析' },
               { title: '待确认专用表' },
               { title: '比对中' },
               { title: '已完成' },
             ]}
           />
         </Card>
+
+        {task.status === 'failed' && task.errorSummary ? (
+          <Alert type="error" showIcon message="任务失败" description={task.errorSummary} />
+        ) : null}
 
         <Tabs
           defaultActiveKey="sheet"
@@ -254,13 +201,8 @@ export default function TaskDetailPage() {
               label: '专用表与确认',
               children: (
                 <Card size="small" title="企标查新专用表">
-                  {task.status === 'parsing' ? (
-                    <Space direction="vertical" style={{ width: '100%' }}>
-                      <Spin tip="正在解析企标并生成初稿（演示）…" />
-                      <Typography.Text type="secondary">
-                        真实环境为 Celery 异步 + WebSocket；此处为定时 Mock。
-                      </Typography.Text>
-                    </Space>
+                  {task.status === 'failed' ? (
+                    <Empty description={task.errorSummary ?? '任务失败'} />
                   ) : (
                     <>
                       <Table<ReferenceSheetRow>
@@ -277,6 +219,7 @@ export default function TaskDetailPage() {
                             render: (v, row, index) => (
                               <Input
                                 value={v as string}
+                                disabled={task.sheetConfirmed}
                                 onChange={(e) => {
                                   const next = [...sheetDraft]
                                   next[index] = { ...row, stdNo: e.target.value }
@@ -291,6 +234,7 @@ export default function TaskDetailPage() {
                             render: (v, row, index) => (
                               <Input
                                 value={v as string}
+                                disabled={task.sheetConfirmed}
                                 onChange={(e) => {
                                   const next = [...sheetDraft]
                                   next[index] = { ...row, stdName: e.target.value }
@@ -306,6 +250,7 @@ export default function TaskDetailPage() {
                             render: (v, row, index) => (
                               <Input
                                 value={(v as string) || ''}
+                                disabled={task.sheetConfirmed}
                                 onChange={(e) => {
                                   const next = [...sheetDraft]
                                   next[index] = { ...row, techFragment: e.target.value }
@@ -321,6 +266,7 @@ export default function TaskDetailPage() {
                             render: (v, row, index) => (
                               <Input
                                 value={(v as string) || ''}
+                                disabled={task.sheetConfirmed}
                                 onChange={(e) => {
                                   const next = [...sheetDraft]
                                   next[index] = { ...row, remark: e.target.value }
@@ -332,30 +278,35 @@ export default function TaskDetailPage() {
                         ]}
                       />
                       <Space style={{ marginTop: 16 }} wrap>
-                        <Button onClick={() => void onSaveDraft()} loading={saving} disabled={task.sheetConfirmed}>
+                        <Button
+                          onClick={() => void onSaveDraft()}
+                          loading={saving}
+                          disabled={task.sheetConfirmed}
+                        >
                           保存草稿
                         </Button>
-                        <Tooltip
-                          title={
-                            task.sheetConfirmed
-                              ? '已确认，不可重复提交'
-                              : sheetDraft.length === 0
-                                ? '请等待解析完成或补充行后再确认'
-                                : undefined
-                          }
-                        >
-                          <span>
-                            <Button
-                              type="primary"
-                              loading={confirming}
-                              disabled={task.sheetConfirmed || sheetDraft.length === 0}
-                              onClick={() => onConfirmSheet()}
-                            >
-                              确认专用表并进入比对
-                            </Button>
-                          </span>
-                        </Tooltip>
+                        {task.status === 'pending_confirm' ? (
+                          <Tooltip
+                            title={
+                              sheetDraft.length === 0 ? '专用表为空，请补充引用行后再确认' : undefined
+                            }
+                          >
+                            <span>
+                              <Button
+                                type="primary"
+                                loading={confirming}
+                                disabled={sheetDraft.length === 0}
+                                onClick={() => onConfirmSheet()}
+                              >
+                                确认专用表并执行三列比对
+                              </Button>
+                            </span>
+                          </Tooltip>
+                        ) : null}
                         {task.sheetConfirmed ? <Tag color="success">已确认</Tag> : null}
+                        {task.status === 'completed' ? (
+                          <Tag color="blue">比对已完成，专用表已锁定</Tag>
+                        ) : null}
                       </Space>
                     </>
                   )}
@@ -364,35 +315,32 @@ export default function TaskDetailPage() {
             },
             {
               key: 'compare',
-              label: '比对明细',
+              label: '比对明细（三列）',
               disabled: compareDisabled,
               children: (
-                <Card size="small" title="企标查新比对明细表">
-                  {task.status === 'comparing' ? (
-                    <Progress percent={compareProgress ?? 30} status="active" style={{ marginBottom: 16 }} />
-                  ) : null}
-                  <ProTable<CompareRow>
-                    rowKey="id"
-                    search={false}
-                    options={false}
-                    pagination={false}
+                <Card size="small" title="规范性引用三列查新结果">
+                  <NoveltyTaskConclusionAlert task={task} />
+                  <NoveltyCompareResultTable
                     dataSource={task.compareRows}
-                    columns={compareColumns}
-                    expandable={{
-                      expandedRowRender: (r) => (
-                        <Typography.Paragraph style={{ margin: 0 }}>
-                          <Typography.Text strong>谱系摘要（演示）</Typography.Text>
-                          <br />
-                          {r.pedigreeSummary || '—'}
-                        </Typography.Paragraph>
-                      ),
-                      rowExpandable: (r) => Boolean(r.pedigreeSummary || r.replacementNo),
-                    }}
-                    locale={{
-                      emptyText: (
-                        <Empty description="暂无比对结果，请先完成「专用表与确认」" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                      ),
-                    }}
+                    compareDone={task.compareDone}
+                    compareTotal={totalRows}
+                  />
+                </Card>
+              ),
+            },
+            {
+              key: 'indicators',
+              label: '历史指标',
+              disabled: task.status === 'failed',
+              children: (
+                <Card size="small" title="历次评价指标汇总">
+                  <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+                    数据来自 <Typography.Text code>GET .../tasks/{'{id}'}/indicators</Typography.Text>
+                    （仅当 <Typography.Text code>indicators_available=true</Typography.Text> 时加载）。
+                  </Typography.Paragraph>
+                  <NoveltyIndicatorsPanel
+                    taskId={task.id}
+                    indicatorsAvailable={Boolean(task.indicatorsAvailable)}
                   />
                 </Card>
               ),
@@ -405,49 +353,14 @@ export default function TaskDetailPage() {
                   <Alert
                     type="info"
                     showIcon
-                    style={{ marginBottom: 16 }}
-                    message="与合规导出的区别"
-                    description={
-                      <>
-                        说明文档中的{' '}
-                        <Typography.Text code>export-report</Typography.Text> 为合规审查 Excel，不可替代查新结论
-                        PDF；真实查新下载路径待后端提供。
-                      </>
-                    }
+                    message="PDF 报告尚未开放"
+                    description="后端 POST /tasks/{id}/report 当前返回 501，请以后端上线后再启用生成与下载。"
                   />
-                  <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                    <Space wrap>
-                      <Button
-                        type="primary"
-                        icon={<FilePdfOutlined />}
-                        loading={reportBusy || task.reportState === 'generating'}
-                        disabled={task.status !== 'completed' || task.reportState === 'ready'}
-                        onClick={() => void onGeneratePdf()}
-                      >
-                        生成查新 PDF（演示）
-                      </Button>
-                      <Button
-                        disabled={task.status !== 'completed'}
-                        onClick={() =>
-                          message.info('演示：已按「无报告」归档；真实环境应写入查新历史并保留比对结果。')
-                        }
-                      >
-                        跳过 PDF，仅归档
-                      </Button>
-                      <Button
-                        disabled={task.reportState !== 'ready'}
-                        onClick={() => message.info('演示环境不提供真实文件流；对接后在此触发下载 URL。')}
-                      >
-                        下载报告
-                      </Button>
-                    </Space>
-                    {task.reportState === 'ready' && task.reportGeneratedAt ? (
-                      <Typography.Text type="success">
-                        报告已就绪（演示）：{task.reportGeneratedAt.replace('T', ' ').slice(0, 19)}
-                      </Typography.Text>
-                    ) : (
-                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="预览区占位：嵌入 PDF 预览待联调" />
-                    )}
+                  <Space style={{ marginTop: 16 }}>
+                    <Button type="primary" icon={<FilePdfOutlined />} disabled>
+                      生成查新 PDF
+                    </Button>
+                    <Button disabled>下载报告</Button>
                   </Space>
                 </Card>
               ),
