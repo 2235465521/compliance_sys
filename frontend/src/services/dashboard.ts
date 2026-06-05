@@ -1,5 +1,43 @@
 import request from './request'
-import type { StatisticsData, BasicSearchResult, PaginatedResponse, StandardItem } from '@/types/dashboard'
+import { basicSearch } from '@/services/standard-library'
+import { fuzzyMatchText } from '@/utils/fuzzyTextMatch'
+import {
+  DEFAULT_DASHBOARD_HINT_DAYS,
+  type AbolitionHintItem,
+  type AbolitionHintsPayload,
+  type BasicSearchResult,
+  type EffectiveHintItem,
+  type EffectiveHintsPayload,
+  type PaginatedResponse,
+  type StandardItem,
+  type StatisticsData,
+} from '@/types/dashboard'
+
+/** 辅助：从对象中取第一个有值的 key，返回字符串（空则返回 ''） */
+function field(obj: Record<string, unknown>, ...keys: string[]): string {
+  for (const key of keys) {
+    const v = obj[key]
+    if (v != null && String(v).trim()) return String(v).trim()
+  }
+  return ''
+}
+
+/** 辅助：解包 { code:200, data:T } 信封响应；若不是信封格式则原样返回 */
+function parseEnvelopeData<T>(data: unknown): T {
+  if (data && typeof data === 'object') {
+    const o = data as Record<string, unknown>
+    if (typeof o.code === 'number' && o.code === 200 && o.data != null) {
+      return o.data as T
+    }
+  }
+  return data as T
+}
+
+const MOCK_STATISTICS: StatisticsData = {
+  total: 0,
+  types: {},
+  states: { 现行: 0, 废止: 0, 即将实施: 0 },
+}
 
 /** 统计数据：支持 { code, data } 或裸 data（与 standards 统计一致） */
 function parseStatisticsResponse(res: unknown): StatisticsData {
@@ -31,7 +69,6 @@ export async function fetchStatistics(): Promise<StatisticsData> {
     console.warn('[dashboard] 统计接口不可用，使用 Mock 数据')
     return MOCK_STATISTICS
   }
-  return "";
 }
 
 function normalizeHintRow(raw: Record<string, unknown>): AbolitionHintItem {
@@ -47,11 +84,37 @@ function normalizeHintRow(raw: Record<string, unknown>): AbolitionHintItem {
 function normalizeAbolitionHints(data: Record<string, unknown>): AbolitionHintsPayload {
   const upcoming = Array.isArray(data.upcoming) ? data.upcoming : [];
   const recent = Array.isArray(data.recent) ? data.recent : [];
+  const windowDays = Number(data.windowDays ?? data.window_days ?? NaN);
+  const recentDays = Number(data.recentDays ?? data.recent_days ?? NaN);
   return {
     asOf: field(data, "asOf", "as_of"),
+    windowDays: Number.isFinite(windowDays) ? windowDays : undefined,
+    recentDays: Number.isFinite(recentDays) ? recentDays : undefined,
     upcoming: upcoming.map((r) => normalizeHintRow(r as Record<string, unknown>)),
     recent: recent.map((r) => normalizeHintRow(r as Record<string, unknown>)),
   };
+}
+
+function normalizeEffectiveHintRow(raw: Record<string, unknown>): EffectiveHintItem {
+  return {
+    stdCode: field(raw, 'stdCode', 'std_code'),
+    stdName: field(raw, 'stdName', 'std_name'),
+    stdStatus: field(raw, 'stdStatus', 'std_status'),
+    effectiveDate: field(raw, 'effectiveDate', 'effective_date'),
+    daysFromToday: Number(raw.daysFromToday ?? raw.days_from_today ?? 0),
+  }
+}
+
+function normalizeEffectiveHints(data: Record<string, unknown>): EffectiveHintsPayload {
+  const upcoming = Array.isArray(data.upcoming) ? data.upcoming : []
+  const windowDays = Number(data.windowDays ?? data.window_days ?? NaN)
+  return {
+    asOf: field(data, 'asOf', 'as_of'),
+    windowDays: Number.isFinite(windowDays) ? windowDays : undefined,
+    upcoming: upcoming.map((r) =>
+      normalizeEffectiveHintRow(r as Record<string, unknown>),
+    ),
+  }
 }
 
 /** 将 StandardDetailOut（camelCase/snake_case）映射为快捷查询表格行 */
@@ -93,13 +156,80 @@ export type AbolitionHintsQuery = {
   limit?: number;
 };
 
-/** GET v1/dashboard/abolition-hints */
+const DEFAULT_HINTS_LIMIT = 200
+
+function defaultAbolitionQuery(
+  params?: AbolitionHintsQuery,
+): Required<Pick<AbolitionHintsQuery, 'upcoming_days' | 'recent_days'>> &
+  AbolitionHintsQuery {
+  const days = params?.upcoming_days ?? params?.recent_days ?? DEFAULT_DASHBOARD_HINT_DAYS
+  return {
+    upcoming_days: params?.upcoming_days ?? days,
+    recent_days: params?.recent_days ?? days,
+    limit: params?.limit ?? DEFAULT_HINTS_LIMIT,
+  }
+}
+
+/** GET v1/dashboard/abolition-hints（失败时回退旧路径） */
 export async function fetchDashboardAbolitionHints(
   params?: AbolitionHintsQuery,
 ): Promise<AbolitionHintsPayload> {
-  const res = await request.get(`v1/dashboard/abolition-hints/`, { params });
-  const payload = parseEnvelopeData<Record<string, unknown>>(res.data);
-  return normalizeAbolitionHints(payload);
+  const query = defaultAbolitionQuery(params)
+  try {
+    const res = await request.get(`v1/dashboard/abolition-hints/`, { params: query })
+    const payload = parseEnvelopeData<Record<string, unknown>>(res.data)
+    return normalizeAbolitionHints(payload)
+  } catch (primaryError) {
+    try {
+      const res = await request.get('/standards/dashboard-alerts/', {
+        params: {
+          upcoming_days: query.upcoming_days,
+          recent_days: query.recent_days,
+          limit: query.limit,
+        },
+      })
+      const payload = parseEnvelopeData<Record<string, unknown>>(res.data)
+      const normalized = normalizeAbolitionHints(payload)
+      return {
+        ...normalized,
+        windowDays: query.upcoming_days,
+        recentDays: query.recent_days,
+      }
+    } catch {
+      throw primaryError
+    }
+  }
+}
+
+export type EffectiveHintsQuery = {
+  window_days?: number
+  limit?: number
+}
+
+/** GET v1/dashboard/effective-hints（失败时回退旧路径） */
+export async function fetchDashboardEffectiveHints(
+  params?: EffectiveHintsQuery,
+): Promise<EffectiveHintsPayload> {
+  const window_days = params?.window_days ?? DEFAULT_DASHBOARD_HINT_DAYS
+  const limit = params?.limit ?? DEFAULT_HINTS_LIMIT
+  try {
+    const res = await request.get(`v1/dashboard/effective-hints/`, {
+      params: { window_days, limit },
+    })
+    const payload = parseEnvelopeData<Record<string, unknown>>(res.data)
+    return normalizeEffectiveHints(payload)
+  } catch (primaryError) {
+    try {
+      const res = await request.get('/standards/dashboard-effective-alerts/', {
+        params: { window_days, limit },
+      })
+      const payload = parseEnvelopeData<Record<string, unknown>>(res.data)
+      const normalized = normalizeEffectiveHints(payload)
+      return { ...normalized, windowDays: window_days }
+    } catch {
+      throw primaryError
+    }
+  }
 }
 
 /**
@@ -141,10 +271,66 @@ export async function fetchDashboardQuickLookup(
   throw new Error(body?.msg || "查询失败");
 }
 
-/** 工作台快捷查标准（按标准号精确查询） */
+function mapStandardItemToBasicRow(item: StandardItem): BasicSearchResult {
+  return {
+    id: item.id,
+    bz_id: item.bz_id,
+    bz_name: item.bz_name,
+    ex_state: item.ex_state,
+    release_date: item.bz_release_date,
+    implement_time: item.implement_time,
+  }
+}
+
+/**
+ * 工作台快捷查标准：先尝试 quick-lookup；否则走列表/基础搜索，并做前端模糊过滤。
+ */
 export async function searchStandards(keyword: string): Promise<BasicSearchResult[]> {
-  const row = await fetchDashboardQuickLookup(keyword);
-  return [row];
+  const q = keyword.trim()
+  if (!q) {
+    const err = new Error('请输入标准号或关键词')
+    ;(err as Error & { status?: number }).status = 422
+    throw err
+  }
+
+  try {
+    const exact = await fetchDashboardQuickLookup(q)
+    return [exact]
+  } catch (e) {
+    const status = (e as Error & { status?: number }).status
+    if (status === 422) throw e
+  }
+
+  try {
+    const list = await fetchStandardList({ search: q, page_size: 50, page: 1 })
+    const rows = list.results
+      .map(mapStandardItemToBasicRow)
+      .filter((row) => fuzzyMatchText(q, row.bz_id, row.bz_name))
+    if (rows.length > 0) return rows
+  } catch {
+    // 继续尝试 basic-search
+  }
+
+  try {
+    const items = await basicSearch(q)
+    const rows = items
+      .filter((item) => fuzzyMatchText(q, item.bz_id, item.bz_name))
+      .map((item) => ({
+        id: item.id,
+        bz_id: item.bz_id,
+        bz_name: item.bz_name,
+        ex_state: item.ex_state,
+        release_date: item.release_date ?? undefined,
+        implement_time: item.implement_time ?? undefined,
+      }))
+    if (rows.length > 0) return rows
+  } catch {
+    // fall through
+  }
+
+  const err = new Error('未找到匹配的标准，可尝试标准号片段或名称关键词')
+  ;(err as Error & { status?: number }).status = 404
+  throw err
 }
 
 /** POST /api/warnings/mark_read — 标记预警为已读（旧能力，暂无仪表盘入口） */

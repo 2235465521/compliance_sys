@@ -1,4 +1,4 @@
-import { Col, Row, Spin, Typography, Button, Space, Divider } from "antd";
+import { Col, Row, Spin, Typography, Button, Space } from "antd";
 import {
   ReloadOutlined,
   DatabaseOutlined,
@@ -12,58 +12,86 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import KpiCard from "./components/KpiCard";
 import StatsPieChart from "./components/StatsPieChart";
+import StatsRingChart from "./components/StatsRingChart";
 import StandardSearch from "./components/StandardSearch";
 import DashboardAlerts from "./components/DashboardAlerts";
 import { useDashboardData } from "./hooks/useDashboardData";
+import "./dashboard.css";
 
 dayjs.locale("zh-cn");
 
-/** KPI 卡片配置 */
-const KPI_CONFIG = [
-  {
-    key: "totalCount" as const,
-    title: "标准总量",
-    icon: <DatabaseOutlined />,
-    gradient: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-  },
-  {
-    key: "activeCount" as const,
-    title: "现行标准",
-    icon: <SafetyCertificateOutlined />,
-    gradient: "linear-gradient(135deg, #56d082 0%, #38a169 100%)",
-  },
-  {
-    key: "pendingCount" as const,
-    title: "即将实施",
-    icon: <ClockCircleOutlined />,
-    gradient: "linear-gradient(135deg, #f6ad55 0%, #dd6b20 100%)",
-  },
-  {
-    key: "revokedCount" as const,
-    title: "废止标准",
-    icon: <StopOutlined />,
-    gradient: "linear-gradient(135deg, #a0aec0 0%, #4a5568 100%)",
-  },
-  {
-    key: "unreadWarnings" as const,
-    title: "近期废止警示",
-    icon: <AlertOutlined />,
-    gradient: "linear-gradient(135deg, #fc8181 0%, #c53030 100%)",
-  },
-];
-
 export default function DashboardPage() {
-  const { stats, loading, reload } = useDashboardData();
+  const {
+    stats,
+    loading,
+    abolitionLoading,
+    effectiveLoading,
+    abolitionDays,
+    recentDays,
+    effectiveDays,
+    reload,
+    changeAbolitionDays,
+    changeRecentDays,
+    changeEffectiveDays,
+  } = useDashboardData();
+
+  const total = stats?.totalCount ?? 0;
+  const activePct =
+    total > 0 ? ((( stats?.activeCount ?? 0) / total) * 100).toFixed(1) : "0.0";
+
+  const KPI_CONFIG = [
+    {
+      key: "totalCount" as const,
+      title: "标准总量",
+      icon: <DatabaseOutlined />,
+      borderColor: "#6366f1",
+      iconBg: "#eef2ff",
+      iconColor: "#6366f1",
+      subtitle: "库内标准总计",
+    },
+    {
+      key: "activeCount" as const,
+      title: "现行标准",
+      icon: <SafetyCertificateOutlined />,
+      borderColor: "#10b981",
+      iconBg: "#ecfdf5",
+      iconColor: "#10b981",
+      subtitle: `占比 ${activePct}%`,
+    },
+    {
+      key: "pendingCount" as const,
+      title: "即将实施",
+      icon: <ClockCircleOutlined />,
+      borderColor: "#f59e0b",
+      iconBg: "#fffbeb",
+      iconColor: "#f59e0b",
+      subtitle: "尚未生效标准",
+      subtitleColor: "#f59e0b",
+    },
+    {
+      key: "revokedCount" as const,
+      title: "废止标准",
+      icon: <StopOutlined />,
+      borderColor: "#9ca3af",
+      iconBg: "#f3f4f6",
+      iconColor: "#6b7280",
+      subtitle: "历史累计废止",
+    },
+    {
+      key: "unreadWarnings" as const,
+      title: "近期废止警示",
+      icon: <AlertOutlined />,
+      borderColor: "#ef4444",
+      iconBg: "#fef2f2",
+      iconColor: "#ef4444",
+      subtitle: "近期窗口统计",
+      subtitleColor: "#ef4444",
+    },
+  ];
 
   return (
-    <div
-      style={{
-        padding: "24px 28px",
-        minHeight: "100%",
-        background: "#f5f7fa",
-      }}
-    >
-      {/* ── 页头区 ──────────────────────────────────────────── */}
+    <div style={{ padding: "24px 28px", minHeight: "100%", background: "#f3f4f6" }}>
+      {/* ── 页头 ── */}
       <div
         style={{
           display: "flex",
@@ -73,11 +101,11 @@ export default function DashboardPage() {
         }}
       >
         <div>
-          <Typography.Title level={4} style={{ margin: 0, color: "#1a202c" }}>
+          <Typography.Title level={4} style={{ margin: 0, color: "#111827" }}>
             工作台 · 仪表盘
           </Typography.Title>
           <Space style={{ marginTop: 4 }} size={6}>
-            <CalendarOutlined style={{ color: "#8c8c8c", fontSize: 13 }} />
+            <CalendarOutlined style={{ color: "#9ca3af", fontSize: 13 }} />
             <Typography.Text type="secondary" style={{ fontSize: 13 }}>
               {dayjs().format("YYYY年MM月DD日")} · 进入页面或点击刷新加载最新统计
             </Typography.Text>
@@ -94,52 +122,61 @@ export default function DashboardPage() {
       </div>
 
       <Spin spinning={loading} size="large" tip="数据加载中...">
-        {/* ── KPI 卡片行（flex 5 等宽）──────────────────────── */}
+        {/* ── 第一行：5 张 KPI 卡片 ── */}
         <div
           style={{
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)",
             gap: 16,
-            flexWrap: "wrap",
-            marginBottom: 16,
+            marginBottom: 24,
           }}
         >
-          {KPI_CONFIG.map(({ key, title, icon, gradient }) => (
-            <div key={key} style={{ flex: "1 1 160px", minWidth: 150 }}>
-              <KpiCard
-                title={title}
-                value={stats?.[key] ?? 0}
-                icon={icon}
-                gradient={gradient}
-              />
-            </div>
+          {KPI_CONFIG.map(({ key, title, icon, borderColor, iconBg, iconColor, subtitle, subtitleColor }) => (
+            <KpiCard
+              key={key}
+              title={title}
+              value={stats?.[key] ?? 0}
+              icon={icon}
+              borderColor={borderColor}
+              iconBg={iconBg}
+              iconColor={iconColor}
+              subtitle={subtitle}
+              subtitleColor={subtitleColor}
+            />
           ))}
         </div>
 
-        <Row gutter={[16, 16]}>
-          {/* ── 图表区 ──────────────────────────────────────── */}
-          <Col xs={24} lg={8}>
+        {/* ── 第二行：类别分布（左）+ 状态分布&快速查询（右）── */}
+        <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+          <Col xs={24} lg={14}>
             <StatsPieChart data={stats?.typeData ?? []} />
           </Col>
-          <Col xs={24} lg={16}>
-            <StandardSearch />
-          </Col>
-
-          {/* ── 底部实时更新与提醒专区 ──────────────────────────── */}
-          <Col span={24}>
-            <DashboardAlerts
-              loading={loading}
-              asOf={stats?.abolitionHintsAsOf}
-              upcoming={stats?.abolitionUpcoming ?? []}
-              recent={stats?.abolitionRecent ?? []}
-            />
+          <Col xs={24} lg={10}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 20, height: "100%" }}>
+              <StatsRingChart data={stats?.stateData ?? []} />
+              <div style={{ flex: 1 }}>
+                <StandardSearch />
+              </div>
+            </div>
           </Col>
         </Row>
 
-        <Divider style={{ margin: "16px 0 8px" }} />
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-          数据来源：仪表盘 summary / abolition-hints / quick-lookup ·
-          每次进入页面或点击「刷新数据」重新拉取
-        </Typography.Text>
+        {/* ── 第三行：标准时效提醒 ── */}
+        <DashboardAlerts
+          abolitionLoading={abolitionLoading}
+          effectiveLoading={effectiveLoading}
+          abolitionDays={abolitionDays}
+          recentDays={recentDays}
+          effectiveDays={effectiveDays}
+          onAbolitionDaysChange={(days) => void changeAbolitionDays(days)}
+          onRecentDaysChange={(days) => void changeRecentDays(days)}
+          onEffectiveDaysChange={(days) => void changeEffectiveDays(days)}
+          asOf={stats?.abolitionHintsAsOf}
+          upcoming={stats?.abolitionUpcoming ?? []}
+          recent={stats?.abolitionRecent ?? []}
+          effectiveAsOf={stats?.effectiveHintsAsOf}
+          effectiveUpcoming={stats?.effectiveUpcoming ?? []}
+        />
       </Spin>
     </div>
   );

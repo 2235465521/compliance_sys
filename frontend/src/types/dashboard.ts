@@ -34,9 +34,30 @@ export interface AbolitionHintItem {
 
 export interface AbolitionHintsPayload {
   asOf: string
+  windowDays?: number
+  recentDays?: number
   upcoming: AbolitionHintItem[]
   recent: AbolitionHintItem[]
 }
+
+/** 即将实施提示单条（GET v1/dashboard/effective-hints） */
+export interface EffectiveHintItem {
+  stdCode: string
+  stdName: string
+  stdStatus: string
+  effectiveDate: string
+  daysFromToday: number
+}
+
+export interface EffectiveHintsPayload {
+  asOf: string
+  windowDays?: number
+  upcoming: EffectiveHintItem[]
+}
+
+export const DASHBOARD_HINT_DAY_OPTIONS = [30, 60, 90] as const
+export type DashboardHintDays = (typeof DASHBOARD_HINT_DAY_OPTIONS)[number]
+export const DEFAULT_DASHBOARD_HINT_DAYS: DashboardHintDays = 30
 
 /** 预警条目 */
 export interface WarningItem {
@@ -69,8 +90,13 @@ export interface DashboardStats {
   unreadWarnings: number
   /** 废止提示基准日 */
   abolitionHintsAsOf?: string
+  abolitionWindowDays?: number
+  abolitionRecentDays?: number
   abolitionUpcoming?: AbolitionHintItem[]
   abolitionRecent?: AbolitionHintItem[]
+  effectiveHintsAsOf?: string
+  effectiveWindowDays?: number
+  effectiveUpcoming?: EffectiveHintItem[]
   /** 类型分布（饼图用） */
   typeData: StandardTypeStat[]
   /** 状态分布（环形图用） */
