@@ -1,16 +1,18 @@
-import { Button, Col, Descriptions, Divider, Form, Input, Modal, Row, Typography, message } from 'antd'
+import { Button, Divider, Empty, Form, Input, Modal, Tag, Typography, message } from 'antd'
 
-import { CloseOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons'
+import { ApartmentOutlined, CloseOutlined, EditOutlined, NodeIndexOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons'
 
-import { SL_PAGE_TITLE } from '@/pages/standard-library/pageHeaderStyles'
+import { SL_PAGE_SUBTITLE, SL_PAGE_TITLE } from '@/pages/standard-library/pageHeaderStyles'
+
+import './lineage.css'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import PedigreeGraph from '@/pages/standard-library/components/PedigreeGraph'
 
-import { checkLatest, fetchTreeData, patchPedigreeNode } from '@/services/standard-library'
+import { fetchTreeData, patchPedigreeNode } from '@/services/standard-library'
 
-import type { CheckLatestOk, TreeLink, TreeNode } from '@/types/standard-library'
+import type { TreeLink, TreeNode } from '@/types/standard-library'
 
 
 
@@ -142,11 +144,13 @@ function stateTagStyle(ex?: string): CSSProperties {
 
       padding: '2px 8px',
 
-      borderRadius: 6,
+      borderRadius: 999,
 
-      background: C.surfaceContainer,
+      background: '#fff1f0',
 
-      color: C.onSurfaceVariant,
+      color: '#cf1322',
+
+      border: '1px solid #ffa39e',
 
     }
 
@@ -206,13 +210,11 @@ export default function StandardLibraryLineagePage() {
 
   const [queryLoading, setQueryLoading] = useState(false)
 
-  const [latest, setLatest] = useState<CheckLatestOk | null>(null)
-
   const [nodes, setNodes] = useState<TreeNode[]>([])
 
   const [links, setLinks] = useState<TreeLink[]>([])
 
-  /** GET get_tree_data/ 返回的现行最新号，优先于查新接口同义字段展示 */
+  /** GET get_tree_data/ 返回的现行根标准号（图谱标题区展示） */
 
   const [pedigreeRootStdCode, setPedigreeRootStdCode] = useState<string | null>(null)
 
@@ -251,49 +253,29 @@ export default function StandardLibraryLineagePage() {
 
     try {
 
-      const results = await Promise.allSettled([fetchTreeData(id), checkLatest(id)])
+      const payload = await fetchTreeData(id)
 
-      const [treeRes, latestRes] = results
+      setNodes(payload.nodes ?? [])
 
-      if (treeRes.status === 'fulfilled') {
+      setLinks(payload.links ?? [])
 
-        const payload = treeRes.value
+      const root = payload.pedigree_root_std_code
 
-        setNodes(payload.nodes ?? [])
+      setPedigreeRootStdCode(root != null && String(root).trim() ? String(root).trim() : null)
 
-        setLinks(payload.links ?? [])
+      setShowTopologyOverview(payload.node_panel?.show_topology_overview === true)
 
-        const root = payload.pedigree_root_std_code
+    } catch (e) {
 
-        setPedigreeRootStdCode(root != null && String(root).trim() ? String(root).trim() : null)
+      message.error(e instanceof Error ? e.message : '族谱加载失败')
 
-        setShowTopologyOverview(payload.node_panel?.show_topology_overview === true)
+      setNodes([])
 
-      } else {
+      setLinks([])
 
-        message.error(treeRes.reason instanceof Error ? treeRes.reason.message : '族谱加载失败')
+      setPedigreeRootStdCode(null)
 
-        setNodes([])
-
-        setLinks([])
-
-        setPedigreeRootStdCode(null)
-
-        setShowTopologyOverview(false)
-
-      }
-
-      if (latestRes.status === 'fulfilled') {
-
-        setLatest(latestRes.value)
-
-      } else {
-
-        setLatest(null)
-
-        message.warning(latestRes.reason instanceof Error ? latestRes.reason.message : '查新检查未完成')
-
-      }
+      setShowTopologyOverview(false)
 
     } finally {
 
@@ -503,28 +485,6 @@ export default function StandardLibraryLineagePage() {
 
 
 
-  /** 现行最新号：优先族谱接口 `pedigree_root_std_code`，其次查新 `current_latest_id` */
-
-  const displayLatestStdCode = useMemo(() => {
-
-    if (pedigreeRootStdCode) return pedigreeRootStdCode
-
-    const q = bzId.trim()
-
-    if (latest && q && latest.query_bz_id === q) {
-
-      const c = String(latest.current_latest_id ?? '').trim()
-
-      if (c) return c
-
-    }
-
-    return '—'
-
-  }, [pedigreeRootStdCode, latest, bzId])
-
-
-
   const primaryBtn: CSSProperties = {
 
     height: 40,
@@ -549,81 +509,13 @@ export default function StandardLibraryLineagePage() {
 
 
 
-  const diagramShell: CSSProperties = {
-
-    flex: 1,
-
-    minHeight: 420,
-
-    overflow: 'auto',
-
-    backgroundColor: C.canvasBg,
-
-    backgroundImage: `radial-gradient(${C.gridDot} 1px, transparent 1px)`,
-
-    backgroundSize: '24px 24px',
-
-    padding: 24,
-
-  }
-
-
-
-  const leftCard: CSSProperties = {
-
-    display: 'flex',
-
-    flexDirection: 'column',
-
-    minHeight: 560,
-
-    background: C.surfaceLowest,
-
-    borderRadius: 16,
-
-    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-
-    border: `1px solid ${C.outlineVariant}`,
-
-    overflow: 'hidden',
-
-  }
-
-
-
-  /** 左 : 右 = 4 : 6（图谱 40%，节点属性详情 60%） */
-
-  const asideCard: CSSProperties = {
-
-    width: '100%',
-
-    display: 'flex',
-
-    flexDirection: 'column',
-
-    maxHeight: 'calc(100vh - 200px)',
-
-    background: C.surfaceLowest,
-
-    borderRadius: 16,
-
-    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-
-    border: `1px solid ${C.outlineVariant}`,
-
-    overflow: 'hidden',
-
-  }
-
-
-
   return (
 
     <>
 
-    <div style={{ background: C.workspaceBg, margin: -24, padding: '28px 32px 40px', minHeight: 'calc(100vh - 48px)' }}>
+    <div className="lineage-page">
 
-      <div style={{ marginBottom: 28 }}>
+      <div className="lineage-page-header">
 
         <Title level={2} style={SL_PAGE_TITLE}>
 
@@ -631,71 +523,27 @@ export default function StandardLibraryLineagePage() {
 
         </Title>
 
+        <Text style={SL_PAGE_SUBTITLE}>
+
+          输入标准号检索族谱关系，在图谱中点击节点查看属性与沿革
+
+        </Text>
+
       </div>
 
 
 
-      <div
+      <div className="lineage-layout">
 
-        style={{
+        <div className="lineage-graph-col">
 
-          width: '100%',
+          <div className="lineage-card lineage-graph-card">
 
-          display: 'flex',
+            <div className="lineage-search-strip">
 
-          flexWrap: 'wrap',
+              <div className="lineage-search-wrap">
 
-          gap: 20,
-
-          alignItems: 'stretch',
-
-        }}
-
-      >
-
-        <div style={{ flex: '2 1 260px', minWidth: 0, display: 'flex' }}>
-
-          <div style={{ ...leftCard, width: '100%' }}>
-
-            <div
-
-              style={{
-
-                padding: '20px 24px',
-
-                background: 'rgba(230,246,255,0.45)',
-
-                backdropFilter: 'blur(6px)',
-
-                borderBottom: `1px solid ${C.outlineVariant}`,
-
-              }}
-
-            >
-
-              <div style={{ position: 'relative', maxWidth: '100%', margin: '0 auto' }}>
-
-                <SearchOutlined
-
-                  style={{
-
-                    position: 'absolute',
-
-                    left: 16,
-
-                    top: '50%',
-
-                    transform: 'translateY(-50%)',
-
-                    color: C.outline,
-
-                    fontSize: 20,
-
-                    zIndex: 1,
-
-                  }}
-
-                />
+                <SearchOutlined className="lineage-search-icon" />
 
                 <Input
 
@@ -705,27 +553,11 @@ export default function StandardLibraryLineagePage() {
 
                   onChange={(e) => setBzId(e.target.value)}
 
-                  placeholder="输入标准号进行检索（将加载族谱与查新）…"
+                  placeholder="输入标准号进行检索（将加载族谱）…"
 
                   onPressEnter={() => void runPedigreeQuery()}
 
-                  style={{
-
-                    paddingLeft: 48,
-
-                    paddingRight: 120,
-
-                    height: 52,
-
-                    borderRadius: 12,
-
-                    border: 'none',
-
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-
-                    fontSize: 15,
-
-                  }}
+                  className="lineage-search-input"
 
                 />
 
@@ -737,31 +569,7 @@ export default function StandardLibraryLineagePage() {
 
                   onClick={() => void runPedigreeQuery()}
 
-                  style={{
-
-                    position: 'absolute',
-
-                    right: 8,
-
-                    top: '50%',
-
-                    transform: 'translateY(-50%)',
-
-                    height: 36,
-
-                    borderRadius: 10,
-
-                    fontWeight: 600,
-
-                    paddingLeft: 18,
-
-                    paddingRight: 18,
-
-                    background: C.primary,
-
-                    border: 'none',
-
-                  }}
+                  className="lineage-search-btn"
 
                 >
 
@@ -775,35 +583,63 @@ export default function StandardLibraryLineagePage() {
 
 
 
-            <div style={diagramShell}>
+            {nodes.length > 0 ? (
+
+              <div className="lineage-graph-meta">
+
+                <Tag icon={<ApartmentOutlined />} color="processing">
+
+                  节点 {nodes.length}
+
+                </Tag>
+
+                <Tag icon={<ShareAltOutlined />} color="default">
+
+                  关系 {links.length}
+
+                </Tag>
+
+                {pedigreeRootStdCode ? (
+
+                  <Tag icon={<NodeIndexOutlined />} color="blue">
+
+                    现行根 {pedigreeRootStdCode}
+
+                  </Tag>
+
+                ) : null}
+
+              </div>
+
+            ) : null}
+
+
+
+            <div className="lineage-canvas">
 
               {nodes.length === 0 && !queryLoading ? (
 
-                <div
+                <div className="lineage-canvas-empty">
 
-                  style={{
+                  <Empty
 
-                    height: 360,
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
 
-                    display: 'flex',
+                    description={
 
-                    alignItems: 'center',
+                      <span style={{ color: C.onSurfaceVariant, fontSize: 14 }}>
 
-                    justifyContent: 'center',
+                        输入标准号并点击「检索」，将在此展示可漫游的谱系图谱
 
-                    color: C.onSurfaceVariant,
+                        <br />
 
-                    fontSize: 14,
+                        点击节点可在右侧查看属性详情
 
-                    textAlign: 'center',
+                      </span>
 
-                    padding: 24,
+                    }
 
-                  }}
-
-                >
-
-                  输入标准号并点击「检索」，将在此展示可漫游的谱系图谱；点击节点可在右侧查看属性与发展脉络。
+                  />
 
                 </div>
 
@@ -835,31 +671,13 @@ export default function StandardLibraryLineagePage() {
 
 
 
-        <div style={{ flex: '3 1 320px', minWidth: 0, display: 'flex' }}>
+        <div className="lineage-detail-col">
 
-          <aside style={{ ...asideCard, width: '100%' }}>
+          <aside className="lineage-card lineage-detail-card">
 
-            <div
+            <div className="lineage-detail-head">
 
-              style={{
-
-                padding: '16px 20px',
-
-                background: C.surfaceLow,
-
-                borderBottom: `1px solid ${C.surfaceContainer}`,
-
-                display: 'flex',
-
-                justifyContent: 'space-between',
-
-                alignItems: 'center',
-
-              }}
-
-            >
-
-              <Title level={5} style={{ margin: 0, fontWeight: 700, color: C.onSurface, fontSize: 15 }}>
+              <Title level={5} style={{ margin: 0, fontWeight: 600, color: C.onSurface, fontSize: 15 }}>
 
                 节点属性详情
 
@@ -883,296 +701,123 @@ export default function StandardLibraryLineagePage() {
 
 
 
-            <div style={{ padding: 20, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className="lineage-detail-body">
 
               {!selectedNode ? (
 
-                <Text style={{ color: C.onSurfaceVariant, fontSize: 13 }}>
+                <Empty
 
-                  检索加载族谱后，点击图谱中的节点，即可在此查看标准号、状态与发展脉络摘要。
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
 
-                </Text>
+                  description="检索加载族谱后，点击图谱中的节点查看详情"
+
+                  style={{ margin: '24px 0' }}
+
+                />
 
               ) : (
 
                 <>
-
                   <div>
-
-                    <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 1, textTransform: 'uppercase' }}>
-
-                      标识与状态
-
-                    </Text>
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, gap: 8 }}>
-
-                      <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 16, fontWeight: 700, color: C.primary }}>
-
-                        {selectedNode.id}
-
-                      </span>
-
-                      <span style={stateTagStyle(selectedNode.ex_state)}>{selectedNode.ex_state || '未知'}</span>
-
-                    </div>
-
-                    <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 0.5, marginTop: 12, display: 'block' }}>
-
-                      标准号（图谱主标签 · 与字段 name 一致）
-
-                    </Text>
-
-                    <Text style={{ fontFamily: 'ui-monospace, monospace', display: 'block', marginTop: 4, fontSize: 14, fontWeight: 600, color: C.onSurface }}>
-
-                      {selectedNode.name?.trim() || '—'}
-
-                    </Text>
-
-                    <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 0.5, marginTop: 12, display: 'block' }}>
-
-                      标准名称（全称 · std_name）
-
-                    </Text>
-
-                    <Text
-
+                    <Text className="lineage-section-label">标识与状态</Text>
+                    <div
                       style={{
-
-                        display: 'block',
-
-                        marginTop: 4,
-
-                        fontSize: 13,
-
-                        color: selectedNode.std_name != null && String(selectedNode.std_name).trim() ? C.onSurface : C.onSurfaceVariant,
-
-                        lineHeight: 1.5,
-
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        marginTop: 6,
+                        gap: 8,
                       }}
-
                     >
-
-                      {selectedNode.std_name != null && String(selectedNode.std_name).trim()
-
-                        ? String(selectedNode.std_name).trim()
-
-                        : '暂无'}
-
+                      <span className="lineage-std-code">{selectedNode.id}</span>
+                      <span style={stateTagStyle(selectedNode.ex_state)}>
+                        {selectedNode.ex_state || '未知'}
+                      </span>
+                    </div>
+                    <Text
+                      className="lineage-section-label"
+                      style={{ marginTop: 12, display: 'block', letterSpacing: 0.5, textTransform: 'none' }}
+                    >
+                      标准名称
                     </Text>
-
+                    <Text
+                      style={{
+                        display: 'block',
+                        marginTop: 4,
+                        fontSize: 13,
+                        color:
+                          selectedNode.std_name != null && String(selectedNode.std_name).trim()
+                            ? C.onSurface
+                            : C.onSurfaceVariant,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {selectedNode.std_name != null && String(selectedNode.std_name).trim()
+                        ? String(selectedNode.std_name).trim()
+                        : '暂无'}
+                    </Text>
                   </div>
-
-
 
                   <Divider style={{ margin: 0 }} />
 
-
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 8px' }}>
-
+                  <div className="lineage-meta-grid">
                     <div>
-
-                      <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 0.5 }}>发布日期</Text>
-
-                      <div style={{ fontSize: 13, color: C.onSurface, marginTop: 4 }}>{displayMetaCell(selectedNode.publish_date)}</div>
-
-                    </div>
-
-                    <div>
-
-                      <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 0.5 }}>生效日期</Text>
-
-                      <div style={{ fontSize: 13, color: C.onSurface, marginTop: 4 }}>{displayMetaCell(selectedNode.effective_date)}</div>
-
-                    </div>
-
-                    <div style={{ gridColumn: '1 / -1' }}>
-
-                      <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 0.5 }}>归口单位</Text>
-
+                      <Text
+                        className="lineage-section-label"
+                        style={{ textTransform: 'none', letterSpacing: 0.5 }}
+                      >
+                        发布日期
+                      </Text>
                       <div style={{ fontSize: 13, color: C.onSurface, marginTop: 4 }}>
-
-                        {displayMetaCell(selectedNode.responsible_unit)}
-
+                        {displayMetaCell(selectedNode.publish_date)}
                       </div>
-
                     </div>
-
+                    <div>
+                      <Text
+                        className="lineage-section-label"
+                        style={{ textTransform: 'none', letterSpacing: 0.5 }}
+                      >
+                        实施日期
+                      </Text>
+                      <div style={{ fontSize: 13, color: C.onSurface, marginTop: 4 }}>
+                        {displayMetaCell(selectedNode.effective_date)}
+                      </div>
+                    </div>
+                    <div className="lineage-meta-full">
+                      <Text
+                        className="lineage-section-label"
+                        style={{ textTransform: 'none', letterSpacing: 0.5 }}
+                      >
+                        归口单位
+                      </Text>
+                      <div style={{ fontSize: 13, color: C.onSurface, marginTop: 4 }}>
+                        {displayMetaCell(selectedNode.responsible_unit)}
+                      </div>
+                    </div>
                   </div>
-
-
-
-                  <Divider style={{ margin: 0 }} />
-
-
 
                   {showTopologyOverview && stats ? (
-
-                    <div>
-
-                      <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 1, textTransform: 'uppercase' }}>
-
-                        拓扑关系概览
-
-                      </Text>
-
-                      <Row gutter={8} style={{ marginTop: 10 }}>
-
-                        <Col span={8}>
-
-                          <div
-
-                            style={{
-
-                              background: C.statTileBg,
-
-                              borderRadius: 10,
-
-                              padding: '10px 6px',
-
-                              textAlign: 'center',
-
-                              border: `1px solid ${C.outlineVariant}`,
-
-                            }}
-
-                          >
-
-                            <div style={{ fontSize: 18, fontWeight: 800, color: C.primary, fontFamily: "'Manrope', sans-serif" }}>
-
-                              {stats.upstreamReplace}
-
-                            </div>
-
-                            <div style={{ fontSize: 10, color: C.onSurfaceVariant, marginTop: 2 }}>上游沿革</div>
-
-                          </div>
-
-                        </Col>
-
-                        <Col span={8}>
-
-                          <div
-
-                            style={{
-
-                              background: C.statTileBg,
-
-                              borderRadius: 10,
-
-                              padding: '10px 6px',
-
-                              textAlign: 'center',
-
-                              border: `1px solid ${C.outlineVariant}`,
-
-                            }}
-
-                          >
-
-                            <div style={{ fontSize: 18, fontWeight: 800, color: C.primary, fontFamily: "'Manrope', sans-serif" }}>
-
-                              {stats.citations}
-
-                            </div>
-
-                            <div style={{ fontSize: 10, color: C.onSurfaceVariant, marginTop: 2 }}>引用</div>
-
-                          </div>
-
-                        </Col>
-
-                        <Col span={8}>
-
-                          <div
-
-                            style={{
-
-                              background: C.statTileBg,
-
-                              borderRadius: 10,
-
-                              padding: '10px 6px',
-
-                              textAlign: 'center',
-
-                              border: `1px solid ${C.outlineVariant}`,
-
-                            }}
-
-                          >
-
-                            <div style={{ fontSize: 18, fontWeight: 800, color: C.primary, fontFamily: "'Manrope', sans-serif" }}>
-
-                              {stats.downstreamReplace}
-
-                            </div>
-
-                            <div style={{ fontSize: 10, color: C.onSurfaceVariant, marginTop: 2 }}>下游替代</div>
-
-                          </div>
-
-                        </Col>
-
-                      </Row>
-
-                    </div>
-
-                  ) : null}
-
-
-
-                  {latest && bzId.trim() && latest.query_bz_id === bzId.trim() ? (
-
                     <>
-
                       <Divider style={{ margin: 0 }} />
-
                       <div>
-
-                        <Text style={{ fontSize: 10, fontWeight: 700, color: C.outline, letterSpacing: 1, textTransform: 'uppercase' }}>
-
-                          检索标准 · 发展脉络（查新）
-
-                        </Text>
-
-                        <Descriptions column={1} size="small" bordered style={{ marginTop: 10 }}>
-
-                          <Descriptions.Item label="现行最新">{String(latest.is_latest)}</Descriptions.Item>
-
-                          <Descriptions.Item label="现行最新号">
-
-                            <Text style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, fontWeight: 600, color: C.primary }}>
-
-                              {displayLatestStdCode}
-
-                            </Text>
-
-                          </Descriptions.Item>
-
-                          <Descriptions.Item label="谱系链条">
-
-                            <Text style={{ fontSize: 12 }}>
-
-                              {latest.pedigree_chain?.length
-
-                                ? latest.pedigree_chain.join(' → ')
-
-                                : '—'}
-
-                            </Text>
-
-                          </Descriptions.Item>
-
-                        </Descriptions>
-
+                        <Text className="lineage-section-label">拓扑关系概览</Text>
+                        <div className="lineage-stat-grid">
+                          <div className="lineage-stat-tile lineage-stat-tile--upstream">
+                            <div className="lineage-stat-value">{stats.upstreamReplace}</div>
+                            <div className="lineage-stat-label">上游沿革</div>
+                          </div>
+                          <div className="lineage-stat-tile lineage-stat-tile--cite">
+                            <div className="lineage-stat-value">{stats.citations}</div>
+                            <div className="lineage-stat-label">引用</div>
+                          </div>
+                          <div className="lineage-stat-tile lineage-stat-tile--downstream">
+                            <div className="lineage-stat-value">{stats.downstreamReplace}</div>
+                            <div className="lineage-stat-label">下游替代</div>
+                          </div>
+                        </div>
                       </div>
-
                     </>
-
                   ) : null}
-
                 </>
 
               )}
@@ -1181,25 +826,7 @@ export default function StandardLibraryLineagePage() {
 
 
 
-            <div
-
-              style={{
-
-                padding: '12px 16px',
-
-                background: C.surfaceLow,
-
-                borderTop: `1px solid ${C.surfaceContainer}`,
-
-                display: 'flex',
-
-                flexDirection: 'column',
-
-                gap: 10,
-
-              }}
-
-            >
+            <div className="lineage-detail-foot">
 
               <Button
 
@@ -1273,7 +900,7 @@ export default function StandardLibraryLineagePage() {
 
         </Form.Item>
 
-        <Form.Item name="effectiveDate" label="生效日期">
+        <Form.Item name="effectiveDate" label="实施日期">
 
           <Input type="date" />
 

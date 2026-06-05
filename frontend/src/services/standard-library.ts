@@ -92,6 +92,113 @@ export async function fetchDetailInfo(bzId: string): Promise<Record<string, unkn
   return data as Record<string, unknown>
 }
 
+async function mutateDetailInfo<T>(method: 'PATCH' | 'DELETE', bzId: string, body?: Record<string, unknown>): Promise<T> {
+  const id = String(bzId ?? '').trim()
+  if (!id) throw new Error('bz_id 不能为空')
+
+  const run = async (path: string) => {
+    if (method === 'DELETE') {
+      return request.delete(path, {
+        params: { bz_id: id },
+        validateStatus: () => true,
+      })
+    }
+    return request.patch(path, body ?? {}, {
+      params: { bz_id: id },
+      headers: { 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+    })
+  }
+
+  let res = await run(`${SL_V1}detail-info/`)
+  if (res.status === 404) {
+    res = await run(`${SL_V1}detail-info`)
+  }
+
+  if (res.status >= 200 && res.status < 300) {
+    return res.data as T
+  }
+  if (res.status === 404) {
+    const altRes = await (method === 'DELETE'
+      ? request.delete(`standards/detail-info/`, { params: { bz_id: id }, validateStatus: () => true })
+      : request.patch(`standards/detail-info/`, body ?? {}, {
+          params: { bz_id: id },
+          headers: { 'Content-Type': 'application/json' },
+          validateStatus: () => true,
+        }))
+    if (altRes.status >= 200 && altRes.status < 300) {
+      return altRes.data as T
+    }
+    legacyDetailEnvelopeThrow(altRes.status, altRes.data)
+  }
+  legacyDetailEnvelopeThrow(res.status, res.data)
+}
+
+function detailPatchParsedData(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object') return null
+  const o = body as Record<string, unknown>
+  if (typeof o.code === 'number') {
+    if (o.code !== 200) {
+      const msg =
+        typeof o.msg === 'string' && o.msg.trim()
+          ? o.msg.trim()
+          : typeof o.message === 'string' && o.message.trim()
+            ? o.message.trim()
+            : ''
+      throw new Error(msg || `操作失败（code ${o.code}）`)
+    }
+    if (o.data != null && typeof o.data === 'object') {
+      return o.data as Record<string, unknown>
+    }
+    return {}
+  }
+  return o as Record<string, unknown>
+}
+
+function legacyDetailEnvelopeThrow(status: number, body: unknown): never {
+  if (status === 404) throw new Error('未找到该标准或接口不可用')
+  if (body && typeof body === 'object') {
+    const o = body as Record<string, unknown>
+    const msg = typeof o.msg === 'string' ? o.msg.trim() : ''
+    if (msg) throw new Error(msg)
+  }
+  throw new Error(parseHttpProblemDetailPayload(body) || `请求失败（HTTP ${status}）`)
+}
+
+/**
+ * 标准详情 PATCH（**不改国标号**：勿传 std_code）。
+ * — `PATCH /api/v1/standards/detail-info/?bz_id=` ，Body：`StandardPatchIn` camelCase 增量字段
+ * — 成功体为详情对象或 `{ code, msg, data }`；HTTP 404 时尝试无尾斜杠与 `standards/detail-info/`
+ */
+export async function patchDetailInfo(bzId: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const raw = await mutateDetailInfo<unknown>('PATCH', bzId, patch)
+  return detailPatchParsedData(raw) ?? (typeof raw === 'object' && raw ? (raw as Record<string, unknown>) : {})
+}
+
+export type DetailInfoDeleteOk = {
+  deleted: boolean
+  bzId?: string
+}
+
+/** `DELETE /api/v1/standards/detail-info/?bz_id=` — 主表、扩展表、`standard_pedigree` 中该国标行（不删 `standard_pedigree_relation`） */
+export async function deleteDetailInfo(bzId: string): Promise<DetailInfoDeleteOk> {
+  const raw = await mutateDetailInfo<unknown>('DELETE', bzId)
+  if (!raw || typeof raw !== 'object') return { deleted: true }
+  const o = raw as Record<string, unknown>
+  let inner = o
+  const code = typeof o.code === 'number' ? o.code : undefined
+  if (code != null && code !== 200 && typeof o.msg === 'string' && o.msg.trim()) {
+    throw new Error(o.msg.trim())
+  }
+  if (typeof o.code === 'number' && o.data != null && typeof o.data === 'object') {
+    inner = o.data as Record<string, unknown>
+  }
+  return {
+    deleted: Boolean(inner.deleted),
+    bzId: inner.bzId != null ? String(inner.bzId) : inner.bz_id != null ? String(inner.bz_id) : undefined,
+  }
+}
+
 export async function basicSearch(q: string): Promise<BasicSearchItem[]> {
   const { data } = await request.get<ApiEnvelope<BasicSearchItem[]>>('standards/basic-search/', {
     params: { q },
@@ -699,4 +806,422 @@ export async function submitPedigreeRelationsBatch(
   })
   assertPostEnvelopeOk(data)
   return data
+}
+
+export type IndexImportResult = {
+  bzId: string
+  imported: number
+  skipped: number
+  warning: string | null
+  indexesCount: number
+}
+
+/**
+ * 国标指标入库（单文件，AI 解析）。
+ * `POST /api/v1/standards/index-import/` · multipart：`file`，Query：`replace`（默认 true）。
+ * — 503：Dify 未配置；500：Dify 调用失败；200：成功，含 imported / bzId / warning。
+ */
+export async function importStandardIndexes(file: File, replace = true): Promise<IndexImportResult> {
+  const form = new FormData()
+  form.append('file', file)
+  let res
+  try {
+    res = await request.post<IndexImportResult>(`${SL_V1}index-import/`, form, {
+      params: { replace },
+      validateStatus: () => true,
+    })
+  } catch (e) {
+    if (axios.isAxiosError(e) && !e.response) {
+      throw new Error(e.message || '网络异常或未连接服务器')
+    }
+    throw e
+  }
+  const { status, data } = res
+  if (status >= 200 && status < 300) {
+    return data as IndexImportResult
+  }
+  if (status === 503) {
+    throw new Error('Dify 未配置，请联系管理员配置后再试')
+  }
+  const detail = parseHttpProblemDetailPayload(data)
+  if (status === 500) {
+    throw new Error(detail || 'Dify 调用失败（网络或解析问题），请稍后重试')
+  }
+  throw new Error(detail || `指标入库请求失败（HTTP ${status}）`)
+}
+
+// ─── 批量指标入库 ─────────────────────────────────────────────────────────────
+
+/** 批次内单个文件条目（snake_case，与后端完全一致） */
+export type BatchIndexTask = {
+  id: string | number
+  sort_order?: number
+  original_filename: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  std_code: string | null
+  indexes_count: number | null
+  manual_review_status: string | null
+  error_message: string | null
+}
+
+/** 完整批次 Job 对象（snake_case，POST 提交和 GET 轮询均返回此结构） */
+export type IndexImportJob = {
+  id: string | number
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  total_items: number
+  completed_items: number
+  failed_items: number
+  items: BatchIndexTask[]
+  created_at?: string
+  updated_at?: string
+}
+
+/** 向后兼容别名 */
+export type BatchIndexPollResult = IndexImportJob
+
+/** 批次列表分页结果 */
+export type IndexImportJobListPage = {
+  results: IndexImportJob[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/**
+ * 提交批量指标入库批次。
+ * `POST /api/v1/standards/index-import-jobs/` · multipart：`files`（多文件同字段名）。
+ * 返回完整 Job 对象，使用 `res.id` 作为后续轮询 ID。
+ */
+export async function submitBatchIndexImport(
+  files: File[],
+  replace = true,
+): Promise<IndexImportJob> {
+  if (files.length === 0) throw new Error('请先选择至少一个国标文件')
+  const form = new FormData()
+  files.forEach((f) => form.append('files', f))
+  let res
+  try {
+    res = await request.post<IndexImportJob>(`${SL_V1}index-import-jobs/`, form, {
+      params: { replace },
+      validateStatus: () => true,
+    })
+  } catch (e) {
+    if (axios.isAxiosError(e) && !e.response) {
+      throw new Error(e.message || '网络异常或未连接服务器')
+    }
+    throw e
+  }
+  const { status, data } = res
+  if (status >= 200 && status < 300) return data as IndexImportJob
+  if (status === 503) throw new Error('Dify 未配置，请联系管理员配置后再试')
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `批次提交失败（HTTP ${status}）`)
+}
+
+// ── 指标入库历史 ───────────────────────────────────────────────────────────
+
+export interface IndexImportHistoryItem {
+  id: number
+  stdCode: string
+  originalFilename: string
+  importStatus: 'completed' | 'failed' | string
+  indexesCount: number
+  manualReviewStatus: 'pending' | 'approved' | 'rejected' | null
+  errorMessage: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface IndexImportHistoryResult {
+  count: number
+  results: IndexImportHistoryItem[]
+}
+
+/**
+ * 获取指标入库历史列表。
+ * `GET /api/v1/standards/index-import-history/`
+ */
+export async function getIndexImportHistory(params?: {
+  page?: number
+  pageSize?: number
+  stdCode?: string
+}): Promise<IndexImportHistoryResult> {
+  const res = await request.get<IndexImportHistoryResult>(
+    `${SL_V1}index-import-history/`,
+    { params, validateStatus: () => true },
+  )
+  const { status, data } = res
+  if (status >= 200 && status < 300) return data as IndexImportHistoryResult
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `获取历史记录失败（HTTP ${status}）`)
+}
+
+// ── 指标审核 ──────────────────────────────────────────────────────────────
+
+export interface IndexItem {
+  index_name: string
+  index_type: string
+  index_content: Record<string, unknown>
+}
+
+export interface IndexReviewResult {
+  stdCode: string
+  indexes: IndexItem[]
+  manualReviewStatus: 'pending' | 'approved' | 'rejected' | null
+}
+
+export interface IndexReviewSubmitBody {
+  indexes: IndexItem[]
+  manualReviewStatus: 'approved' | 'rejected'
+}
+
+function normalizeIndexReviewResult(raw: Record<string, unknown>): IndexReviewResult {
+  const g = (a: string, b: string) => raw[a] ?? raw[b]
+  return {
+    stdCode: (g('stdCode', 'std_code') ?? '') as string,
+    indexes: (raw.indexes ?? []) as IndexItem[],
+    manualReviewStatus: (g('manualReviewStatus', 'manual_review_status') ?? null) as IndexReviewResult['manualReviewStatus'],
+  }
+}
+
+/**
+ * 获取指标审核数据。
+ * `GET /api/v1/standards/index-review/?stdCode=`
+ */
+export async function getIndexReview(stdCode: string): Promise<IndexReviewResult> {
+  const res = await request.get<Record<string, unknown>>(`${SL_V1}index-review/`, {
+    params: { stdCode },
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) {
+    return normalizeIndexReviewResult((data ?? {}) as Record<string, unknown>)
+  }
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `获取审核数据失败（HTTP ${status}）`)
+}
+
+/**
+ * 提交审核结果。
+ * `PUT /api/v1/standards/index-review/?stdCode=`
+ */
+export async function submitIndexReview(
+  stdCode: string,
+  body: IndexReviewSubmitBody,
+): Promise<void> {
+  const res = await request.put(`${SL_V1}index-review/`, body, {
+    params: { stdCode },
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) return
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `提交审核失败（HTTP ${status}）`)
+}
+
+/**
+ * 轮询批量指标入库进度。
+ * `GET /api/v1/standards/index-import-jobs/{id}/`
+ * status === "done" 时停止轮询。
+ */
+export async function pollBatchIndexImport(job_id: string): Promise<BatchIndexPollResult> {
+  if (!job_id || job_id === 'undefined') {
+    throw new Error('job id 无效，无法轮询进度')
+  }
+  const res = await request.get<BatchIndexPollResult>(
+    `${SL_V1}index-import-jobs/${encodeURIComponent(job_id)}/`,
+    { validateStatus: () => true },
+  )
+  const { status, data } = res
+  if (status >= 200 && status < 300) return data as BatchIndexPollResult
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `进度查询失败（HTTP ${status}）`)
+}
+
+export type ApproveAllIndexImportFailure = {
+  std_code?: string | null
+  stdCode?: string | null
+  original_filename?: string | null
+  originalFilename?: string | null
+  reason?: string | null
+  message?: string | null
+}
+
+export type ApproveAllIndexImportResult = {
+  approvedCount: number
+  skippedCount: number
+  failed: ApproveAllIndexImportFailure[]
+  skipped?: ApproveAllIndexImportFailure[]
+}
+
+function normalizeApproveAllResult(raw: Record<string, unknown>): ApproveAllIndexImportResult {
+  const g = (a: string, b: string) => raw[a] ?? raw[b]
+  const list = (v: unknown) => (Array.isArray(v) ? v : []) as Record<string, unknown>[]
+  const mapEntry = (e: Record<string, unknown>): ApproveAllIndexImportFailure => {
+    const ge = (a: string, b: string) => e[a] ?? e[b]
+    return {
+      std_code: (ge('std_code', 'stdCode') ?? null) as string | null,
+      stdCode: (ge('stdCode', 'std_code') ?? null) as string | null,
+      original_filename: (ge('original_filename', 'originalFilename') ?? null) as string | null,
+      originalFilename: (ge('originalFilename', 'original_filename') ?? null) as string | null,
+      reason: (ge('reason', 'message') ?? null) as string | null,
+      message: (ge('message', 'reason') ?? null) as string | null,
+    }
+  }
+  return {
+    approvedCount: Number(g('approvedCount', 'approved_count') ?? 0),
+    skippedCount: Number(g('skippedCount', 'skipped_count') ?? 0),
+    failed: list(g('failed', 'failed')).map(mapEntry),
+    skipped: list(g('skipped', 'skipped')).map(mapEntry),
+  }
+}
+
+/**
+ * 批次内一键将全部待审文件标为审核通过（不改指标内容）。
+ * `POST /api/v1/standards/index-import-jobs/{id}/approve-all/`
+ */
+export async function approveAllIndexImportJob(
+  jobId: string | number,
+  options: { onlyPending?: boolean; manualReviewStatus?: 'approved' | 'rejected' } = {},
+): Promise<ApproveAllIndexImportResult> {
+  const res = await request.post<Record<string, unknown>>(
+    `${SL_V1}index-import-jobs/${encodeURIComponent(String(jobId))}/approve-all/`,
+    {
+      onlyPending: options.onlyPending ?? true,
+      manualReviewStatus: options.manualReviewStatus ?? 'approved',
+    },
+    { validateStatus: () => true },
+  )
+  const { status, data } = res
+  if (status >= 200 && status < 300) {
+    return normalizeApproveAllResult((data ?? {}) as Record<string, unknown>)
+  }
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `批量审核通过失败（HTTP ${status}）`)
+}
+
+/**
+ * 删除指定批次。
+ * `DELETE /api/v1/standards/index-import-jobs/{id}/`
+ */
+export async function deleteIndexImportJob(id: string | number): Promise<void> {
+  const res = await request.delete(`${SL_V1}index-import-jobs/${encodeURIComponent(String(id))}/`, {
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) return
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `删除失败（HTTP ${status}）`)
+}
+
+/**
+ * 分页获取批次任务列表。
+ * `GET /api/v1/standards/index-import-jobs/?page=&page_size=`
+ */
+export async function listIndexImportJobs(params: {
+  page?: number
+  page_size?: number
+} = {}): Promise<IndexImportJobListPage> {
+  const page = params.page ?? 1
+  const page_size = params.page_size ?? 20
+  const res = await request.get<unknown>(`${SL_V1}index-import-jobs/`, {
+    params: { page, page_size },
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) {
+    return normalizeJobListPage(data, page, page_size)
+  }
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `获取批次列表失败（HTTP ${status}）`)
+}
+
+function normalizeJobListPage(
+  data: unknown,
+  page: number,
+  page_size: number,
+): IndexImportJobListPage {
+  if (Array.isArray(data)) {
+    return { results: data as IndexImportJob[], total: data.length, page, page_size }
+  }
+  if (data && typeof data === 'object') {
+    const o = data as Record<string, unknown>
+    const rawList =
+      (Array.isArray(o.results) && o.results) ||
+      (Array.isArray(o.items)   && o.items)   ||
+      (Array.isArray(o.data)    && o.data)    ||
+      []
+    const total = pickJobNum(o, ['count', 'total']) ?? rawList.length
+    return {
+      results:   rawList as IndexImportJob[],
+      total:     typeof total === 'number' && total >= 0 ? total : rawList.length,
+      page:      pickJobNum(o, ['page', 'current']) ?? page,
+      page_size: pickJobNum(o, ['page_size', 'pageSize', 'limit']) ?? page_size,
+    }
+  }
+  return { results: [], total: 0, page, page_size }
+}
+
+function pickJobNum(o: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = o[k]
+    if (typeof v === 'number') return v
+    if (typeof v === 'string' && !isNaN(Number(v))) return Number(v)
+  }
+  return undefined
+}
+
+// ── 指标列表 ──────────────────────────────────────────────────────────────
+
+export interface IndicatorItem {
+  id: number
+  std_code: string
+  indexes: Array<{
+    index_name: string
+    index_type: string
+    index_content: Record<string, unknown>
+  }>
+  manual_review_status: 'pending' | 'approved' | 'rejected' | null
+}
+
+export interface IndicatorListResult {
+  count: number
+  results: IndicatorItem[]
+}
+
+/**
+ * 删除指定指标记录。
+ * `DELETE /api/v1/standards/indicator-list/{id}/`
+ */
+export async function deleteIndicatorItem(id: number): Promise<void> {
+  const res = await request.delete(`${SL_V1}indicator-list/${id}/`, {
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) return
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `删除失败（HTTP ${status}）`)
+}
+
+/**
+ * 获取指标列表。
+ * `GET /api/v1/standards/indicator-list/`
+ */
+export async function getIndicatorList(params?: {
+  stdCode?: string
+  page?: number
+  pageSize?: number
+}): Promise<IndicatorListResult> {
+  const res = await request.get<IndicatorListResult>(`${SL_V1}indicator-list/`, {
+    params: {
+      stdCode:  params?.stdCode  || undefined,
+      page:     params?.page     ?? 1,
+      pageSize: params?.pageSize ?? 20,
+    },
+    validateStatus: () => true,
+  })
+  const { status, data } = res
+  if (status >= 200 && status < 300) return data as IndicatorListResult
+  const detail = parseHttpProblemDetailPayload(data)
+  throw new Error(detail || `获取指标列表失败（HTTP ${status}）`)
 }
