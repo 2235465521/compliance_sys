@@ -31,7 +31,7 @@ export function mockTemplates(): TemplateConfigItem[] {
       updatedAt: nowIso(),
       status: 'active',
       desc: '用于查重服务导出报告。',
-      placeholders: ['standardName', 'similarity', 'conclusion'],
+      placeholders: ['queryText', 'similarity', 'conclusion'],
       relatedModules: ['duplicate-check'],
     },
     {

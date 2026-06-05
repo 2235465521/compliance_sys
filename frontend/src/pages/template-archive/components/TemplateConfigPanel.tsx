@@ -305,7 +305,7 @@ export function TemplateConfigPanel({ onPreview }: { onPreview: PreviewFn }) {
                 </Typography.Paragraph>
                 <div className="tplarch-help-foot">
                   <Typography.Text style={{ color: 'rgba(255,255,255,0.92)', fontSize: 12 }}>
-                    常用占位符：standardName / threshold / conclusion
+                    常用占位符：queryText / threshold / conclusion
                   </Typography.Text>
                 </div>
               </div>

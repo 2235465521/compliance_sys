@@ -7,55 +7,64 @@ import request from '@/services/request'
 import { downloadBlob } from '@/utils/download'
 
 /**
- * 与后端查重/语义分析接口约定对齐（路径与字段以联调为准）：
- * - 一审（字面名称）：POST /api/duplicate/name-check/
- * - 二审（AI 语义）：POST /api/duplicate/semantic-check/
+ * 与《标准化服务平台-查重模块API对接说明》对齐（Django Ninja，前缀 `/api/v1`）：
+ * - 一审（名称快查）：POST /api/v1/duplicate-check/name-check
+ * - 二审（语义立项）：POST /api/v1/duplicate-check/semantic-check
  *
- * axios baseURL 默认为 `VITE_API_BASE_URL` 或 `/api`，故此处路径不再带 `/api` 前缀。
- * 联调局域网时可在 `.env` 配置：`VITE_API_BASE_URL=http://192.168.10.28:8000/api`
+ * axios `baseURL` 默认为 `VITE_API_BASE_URL` 或 `/api`，此处路径写为 `/v1/duplicate-check/...`。
+ * 开发代理：`vite` 将 `/api` 转到后端（`VITE_DEV_PROXY_TARGET`，默认见 vite.config），浏览器请求同源无跨域。
  */
 
-const DUPLICATE_NAME_CHECK = '/duplicate/name-check/'
-const DUPLICATE_SEMANTIC_CHECK = '/duplicate/semantic-check/'
+const DUPLICATE_API_ROOT =
+  (import.meta.env.VITE_DUPLICATE_API_PREFIX as string | undefined)?.replace(/\/+$/, '') ||
+  '/v1/duplicate-check'
+
+const DUPLICATE_NAME_CHECK = `${DUPLICATE_API_ROOT}/name-check`
+const DUPLICATE_SEMANTIC_CHECK = `${DUPLICATE_API_ROOT}/semantic-check`
 /** 标准 PDF 下载（文档 §2.6），查重结果中的 bz_id 可用于下载对应标准全文 */
 const STANDARDS_DOWNLOAD_DOC = '/standards/download-doc/'
 
 /** 查重/语义/大文件下载可能超过 Axios 默认 30s，单独放宽（毫秒） */
 const DUPLICATE_HTTP_TIMEOUT_MS = 120_000
 
-/** 后端 name-check 单条结构（文档 4.1） */
+/** 后端 name-check 单条结构（对接说明 3.2） */
 export type DuplicateNameCheckRow = {
   bz_id: string
   bz_name: string
-  status: string
+  status: string | null
   similarity: number
 }
 
 type NameCheckResponseBody = {
   success?: boolean
+  message?: string
+  error?: string
   data?: DuplicateNameCheckRow[]
 }
 
-/** 后端 semantic-check 响应（文档 4.2） */
+/** 后端 semantic-check 响应（对接说明 3.3） */
 export type SemanticCheckResponse = {
   success?: boolean
   task_id?: string
   message?: string
+  error?: string
 }
 
-/** 将表单字段拼成一审所需的 keyword（文档示例为单个字符串） */
+/** 用户检索原文 → 一审 name-check 的 keyword（整段文本，支持名称 / 关键词 / 立项说明混写） */
 export function buildDuplicateKeyword(payload: DuplicateCheckPayload): string {
-  const parts = [
-    payload.standardName.trim(),
-    ...(payload.keywords || []).map((k) => String(k).trim()).filter(Boolean),
-    ...(payload.outline ? [payload.outline.trim().slice(0, 500)] : []),
-  ].filter(Boolean)
-  return parts.join(' ')
+  return payload.queryText.trim()
+}
+
+function payloadDisplayLabel(payload: DuplicateCheckPayload): string {
+  const t = payload.queryText.trim()
+  if (!t) return '（未填写）'
+  if (t.length <= 150) return t
+  return `${t.slice(0, 150)}…`
 }
 
 /**
- * 字面名称查重（一审）
- * @see POST /api/duplicate/name-check/  body: `{ "keyword": "..." }`
+ * 名称快查（一审）
+ * @see POST /api/v1/duplicate-check/name-check  body: `{ "keyword": "..." }`
  */
 export async function fetchDuplicateNameCheck(keyword: string): Promise<DuplicateNameCheckRow[]> {
   const res = await request.post<NameCheckResponseBody>(
@@ -64,13 +73,16 @@ export async function fetchDuplicateNameCheck(keyword: string): Promise<Duplicat
     { timeout: DUPLICATE_HTTP_TIMEOUT_MS },
   )
   const body = res.data
+  if (body?.success === false) {
+    throw new Error(body.error || body.message || '名称快查失败')
+  }
   if (Array.isArray(body?.data)) return body.data
   return []
 }
 
 /**
- * AI 语义碰撞分析（二审），依赖一审返回的候选标准号列表
- * @see POST /api/duplicate/semantic-check/
+ * 语义立项（二审），依赖一审返回的候选 `bz_id` 列表
+ * @see POST /api/v1/duplicate-check/semantic-check
  */
 export async function fetchDuplicateSemanticCheck(
   intentText: string,
@@ -84,23 +96,24 @@ export async function fetchDuplicateSemanticCheck(
     },
     { timeout: DUPLICATE_HTTP_TIMEOUT_MS },
   )
-  return res.data ?? {}
+  const body = res.data ?? {}
+  if (body.success === false) {
+    throw new Error(body.error || body.message || '语义立项失败')
+  }
+  return body
 }
 
 function mapRowsToHits(
   payload: DuplicateCheckPayload,
   rows: DuplicateNameCheckRow[],
 ): DuplicateCheckHit[] {
-  const kw = (payload.keywords || []).slice(0, 5)
-  const candidateName =
-    payload.standardName +
-    (kw.length ? `（${kw.join('、')}）` : '')
+  const candidateName = payloadDisplayLabel(payload)
   const iso = new Date().toISOString()
 
   return rows.map((row, idx) => {
     const report: DuplicateCheckReport = {
       taskId: row.bz_id,
-      summary: `与标准「${row.bz_name}」字面相似度 ${row.similarity}%（状态：${row.status}）`,
+      summary: `与标准「${row.bz_name}」字面相似度 ${row.similarity}%（状态：${row.status ?? '—'}）`,
       overlapList: [
         {
           standardNo: row.bz_id,
@@ -136,9 +149,11 @@ export async function submitDuplicateCheck(
 
 /** 后端不可用时用于界面演示的示例数据（与 Mock 约定一致） */
 export function buildMockDuplicateHits(payload: DuplicateCheckPayload): DuplicateCheckHit[] {
-  const base = payload.standardName?.trim() || '未命名标准'
-  const kw = (payload.keywords || []).slice(0, 3)
-  const withKw = kw.length ? `（${kw.join('、')}）` : ''
+  const raw = payload.queryText?.trim() || ''
+  const base =
+    raw.split(/\r?\n/).map((l) => l.trim()).find(Boolean)?.slice(0, 80) ||
+    raw.slice(0, 80) ||
+    '未命名标准'
   const iso = new Date().toISOString()
 
   const reportBase: DuplicateCheckReport = {
@@ -157,7 +172,7 @@ export function buildMockDuplicateHits(payload: DuplicateCheckPayload): Duplicat
   return [
     {
       id: 'mock-1',
-      candidateName: `${base}${withKw}`,
+      candidateName: payloadDisplayLabel(payload),
       matchedName: `${base} 术语与定义`,
       similarity: 86,
       highlights: ['GB/T XXXXX—20XX', '现行'],
@@ -166,7 +181,7 @@ export function buildMockDuplicateHits(payload: DuplicateCheckPayload): Duplicat
     },
     {
       id: 'mock-2',
-      candidateName: `${base}${withKw}`,
+      candidateName: payloadDisplayLabel(payload),
       matchedName: `${base} 技术要求`,
       similarity: 72,
       highlights: ['GB/T XXXX—20XX', '现行'],
