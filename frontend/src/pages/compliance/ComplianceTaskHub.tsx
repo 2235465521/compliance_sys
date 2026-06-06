@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Button, Card, Popconfirm, Space, Table, Tabs, Tag, Typography, message } from 'antd'
+import { Button, Card, Popconfirm, Space, Table, Tabs, Tag, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { DeleteOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons'
 import { PageContainer } from '@ant-design/pro-components'
@@ -15,16 +15,14 @@ import type { ComplianceTaskOut } from '@/types/compliance-api'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 import { WIZARD_STEP_TITLES } from '@/pages/compliance/ComplianceWizardPanel'
 
-const { Text } = Typography
-
 const STEP_LABELS = WIZARD_STEP_TITLES
 
 type TaskListTab = 'in_progress' | 'history' | 'all'
 
 function parseTaskListTab(raw: string | null): TaskListTab {
+  if (raw === 'in_progress') return 'in_progress'
   if (raw === 'history' || raw === 'completed') return 'history'
-  if (raw === 'all') return 'all'
-  return 'in_progress'
+  return 'all'
 }
 
 function taskStatusTag(task: ComplianceTaskOut) {
@@ -56,7 +54,7 @@ export default function ComplianceTaskHub() {
   const filter = parseTaskListTab(searchParams.get('tab'))
 
   const setFilter = (tab: TaskListTab) => {
-    if (tab === 'in_progress') {
+    if (tab === 'all') {
       setSearchParams({}, { replace: true })
     } else {
       setSearchParams({ tab }, { replace: true })
@@ -213,15 +211,6 @@ export default function ComplianceTaskHub() {
             { key: 'in_progress', label: `进行中（${counts.inProgress}）` },
           ]}
         />
-        <div style={{ marginTop: 8 }}>
-          <Text type="secondary">
-            {filter === 'history'
-              ? '已完成的评价为后端 current_step≥6 的任务（须在第 5 步点击「人工审核通过」）。仅走完向导第 6 步而未提交审核 5 时，任务仍显示在「进行中」。'
-              : filter === 'in_progress'
-                ? '未完成及待提交审核 5 的任务。'
-                : '全部任务列表，含进行中、已完成与解析失败记录；均可删除。'}
-          </Text>
-        </div>
       </Card>
 
       <Card>

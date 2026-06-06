@@ -13,6 +13,8 @@ import {
   downloadBatchNormativeRefMismatchSummaryTxt,
 } from '@/pages/batch-normative-ref/exportJobReferencesCsv'
 import { resolveBatchJobProgressDisplay, shouldPollBatchNormativeRefJob } from '@/pages/batch-normative-ref/batchJobProgress'
+import { batchItemStatusMeta, batchJobStatusMeta } from '@/pages/batch-normative-ref/batchStatusLabels'
+import { displayBatchJobLabel } from '@/pages/batch-normative-ref/session'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 
 const { Title, Text } = Typography
@@ -55,7 +57,10 @@ export default function BatchJobDetailPage() {
       title: '状态',
       dataIndex: 'status',
       width: 110,
-      render: (s: string) => <Tag>{s}</Tag>,
+      render: (s: string) => {
+        const meta = batchItemStatusMeta(s)
+        return <Tag color={meta.color}>{meta.label}</Tag>
+      },
     },
     {
       title: '说明',
@@ -99,7 +104,7 @@ export default function BatchJobDetailPage() {
     <Space direction="vertical" size={20} style={{ width: '100%' }}>
       <Space align="center" size="large" wrap>
         <Link to="/batch-normative-reference" style={{ fontSize: 15 }}>
-          返回列表
+          返回规范性体检
         </Link>
         {validId ? (
           <Popconfirm
@@ -114,21 +119,7 @@ export default function BatchJobDetailPage() {
         ) : null}
       </Space>
       <Title level={3} style={{ margin: 0 }}>
-        {job?.label?.trim() ? (
-          <>
-            批次详情
-            <Text type="secondary" style={{ fontSize: 20, fontWeight: 400, marginLeft: 8 }}>
-              {job.label.trim()}
-            </Text>
-            {validId != null ? (
-              <Text type="secondary" style={{ fontSize: 16, fontWeight: 400, marginLeft: 8 }}>
-                （编号 {validId}）
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          <>批次详情（编号 {jobIdParam ?? '—'}）</>
-        )}
+        {displayBatchJobLabel(job?.label)}
       </Title>
 
       <Alert
@@ -149,8 +140,12 @@ export default function BatchJobDetailPage() {
         <>
           <Card size="small" loading={loading}>
             <Descriptions bordered column={2} labelStyle={{ fontSize: 15 }} contentStyle={{ fontSize: 15 }}>
-              <Descriptions.Item label="状态">{job.status}</Descriptions.Item>
-              <Descriptions.Item label="标签">{job.label || '-'}</Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <Tag color={batchJobStatusMeta(job.status).color}>
+                  {batchJobStatusMeta(job.status).label}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="任务名称">{displayBatchJobLabel(job.label)}</Descriptions.Item>
               <Descriptions.Item label="子项总数">
                 {progress?.total ?? job.total_items}
               </Descriptions.Item>

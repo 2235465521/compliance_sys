@@ -7,6 +7,7 @@ import { ReverseTab } from '@/pages/alert/components/ReverseTab'
 import { mapMonitorSummaryFromApi } from '@/pages/alert/utils/mapWarningsApi'
 import { fetchMonitorSummary } from '@/services/warnings-api'
 import type { MonitorSummary } from '@/types/warnings'
+import './alertPage.css'
 
 const { Title, Text } = Typography
 
@@ -114,6 +115,7 @@ export default function AlertPage() {
                           openMonitorNeedAttention()
                         }
                       }}
+                      className={needAttentionCount > 0 ? 'alert-bell-shake' : undefined}
                       style={{ cursor: 'pointer', color: '#faad14', fontSize: 22 }}
                     >
                       <BellOutlined />

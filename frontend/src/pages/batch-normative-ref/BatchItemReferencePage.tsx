@@ -16,6 +16,7 @@ import {
   getBatchNormativeRefJobItem,
   updateBatchNormativeRefJobItemReferences,
 } from '@/services/batch-normative-reference'
+import { batchItemStatusMeta } from '@/pages/batch-normative-ref/batchStatusLabels'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 import { ReferenceLatestResolvedTable } from '@/pages/compliance/components/ReferenceLatestResolvedTable'
 import {
@@ -171,7 +172,7 @@ export default function BatchItemReferencePage() {
           返回批次
         </Link>
         <Link to="/batch-normative-reference" style={{ fontSize: 15 }}>
-          批次列表
+          规范性体检
         </Link>
       </Space>
       <Title level={3} style={{ margin: 0 }}>

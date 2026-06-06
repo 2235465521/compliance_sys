@@ -42,7 +42,7 @@ type ExportColumnDef = {
 const FULL_COLUMNS: ExportColumnDef[] = [
   { key: 'rowIndex', header: '序号', width: 6 },
   { key: 'fileSeq', header: '文件序号', width: 8 },
-  { key: 'label', header: '批次标签', width: 14 },
+  { key: 'label', header: '任务名称', width: 14 },
   { key: 'filename', header: '文件名', width: 28 },
   { key: 'qbCode', header: '企标号', width: 18 },
   { key: 'qbName', header: '企标名', width: 22 },

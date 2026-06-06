@@ -20,7 +20,7 @@ export const rootRoute = {
     { path: '/novelty-search', name: '查新服务', icon: <FileSearchOutlined /> },
     { path: '/duplicate-check', name: '查重服务', icon: <BlockOutlined /> },
     { path: '/compliance', name: '合规性评价', icon: <AuditOutlined /> },
-    { path: '/batch-normative-reference', name: '批量合规性评价', icon: <CloudUploadOutlined /> },
+    { path: '/batch-normative-reference', name: '规范性体检', icon: <CloudUploadOutlined /> },
     { path: '/alert', name: '预警系统', icon: <AlertOutlined /> },
     { path: '/enterprise-archive', name: '企业档案', icon: <BankOutlined /> },
     { path: '/template-archive', name: '模板与存档', icon: <FolderOpenOutlined /> },

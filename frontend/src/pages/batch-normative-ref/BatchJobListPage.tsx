@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Alert, Button, Card, Popconfirm, Space, Table, Typography, Upload, message } from 'antd'
+import { Alert, Button, Card, Input, Popconfirm, Space, Table, Tag, Typography, Upload, message } from 'antd'
 import type { UploadFile } from 'antd/es/upload/interface'
 import { InboxOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
@@ -11,20 +11,21 @@ import {
   listBatchNormativeRefJobs,
 } from '@/services/batch-normative-reference'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
-import {
-  getLastBatchNormativeRefJobId,
-  rememberLastBatchNormativeRefJobId,
-} from '@/pages/batch-normative-ref/session'
 import PendingUploadFileList from '@/pages/batch-normative-ref/components/PendingUploadFileList'
+import { batchJobStatusMeta } from '@/pages/batch-normative-ref/batchStatusLabels'
 import {
-  commitBatchLabelAfterSuccessfulCreate,
-  getLabelForNextCreate,
-} from '@/pages/batch-normative-ref/batchLabelSeq'
+  BATCH_JOB_LABEL_MAX_LEN,
+  displayBatchJobLabel,
+  getLastBatchNormativeRefJobId,
+  getLastBatchNormativeRefJobLabel,
+  rememberLastBatchNormativeRefJob,
+} from '@/pages/batch-normative-ref/session'
 
 const { Title, Text } = Typography
 
 export default function BatchJobListPage() {
   const navigate = useNavigate()
+  const [taskName, setTaskName] = useState('')
   const [pendingFileList, setPendingFileList] = useState<UploadFile[]>([])
   const [creating, setCreating] = useState(false)
   const [page, setPage] = useState(1)
@@ -56,6 +57,15 @@ export default function BatchJobListPage() {
   }, [loadList])
 
   const handleCreate = async () => {
+    const label = taskName.trim()
+    if (!label) {
+      message.warning('请填写本次体检任务名称')
+      return
+    }
+    if (label.length > BATCH_JOB_LABEL_MAX_LEN) {
+      message.warning(`任务名称不能超过 ${BATCH_JOB_LABEL_MAX_LEN} 个字符`)
+      return
+    }
     const files = pendingFileList
       .map((f) => f.originFileObj)
       .filter((f): f is File => f instanceof File)
@@ -63,13 +73,12 @@ export default function BatchJobListPage() {
       message.warning('请至少选择一个企标文件')
       return
     }
-    const label = getLabelForNextCreate()
     setCreating(true)
     try {
       const job = await createBatchNormativeRefJob(files, label)
-      commitBatchLabelAfterSuccessfulCreate()
-      rememberLastBatchNormativeRefJobId(job.id)
-      message.success(`已创建批量任务（${label}）`)
+      rememberLastBatchNormativeRefJob(job.id, label)
+      message.success(`已创建规范性体检任务「${label}」`)
+      setTaskName('')
       setPendingFileList([])
       void loadList()
       navigate(`/batch-normative-reference/${job.id}`)
@@ -83,7 +92,7 @@ export default function BatchJobListPage() {
   const handleDelete = async (id: number) => {
     try {
       await deleteBatchNormativeRefJob(id)
-      message.success('已删除该批次')
+      message.success('已删除该任务')
       void loadList()
     } catch (e) {
       message.error(getComplianceApiErrorMessage(e))
@@ -91,11 +100,24 @@ export default function BatchJobListPage() {
   }
 
   const lastId = getLastBatchNormativeRefJobId()
+  const lastLabel = getLastBatchNormativeRefJobLabel()
 
   const columns: ColumnsType<BatchNormativeRefJobSummary> = [
-    { title: 'ID', dataIndex: 'id', width: 90 },
-    { title: '批次标签', dataIndex: 'label', ellipsis: true, render: (v) => v || '-' },
-    { title: '状态', dataIndex: 'status', width: 110 },
+    {
+      title: '任务名称',
+      dataIndex: 'label',
+      ellipsis: true,
+      render: (v: string | null) => displayBatchJobLabel(v),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 110,
+      render: (status: string) => {
+        const meta = batchJobStatusMeta(status)
+        return <Tag color={meta.color}>{meta.label}</Tag>
+      },
+    },
     {
       title: '进度',
       key: 'prog',
@@ -115,7 +137,7 @@ export default function BatchJobListPage() {
       render: (_, r) => (
         <Space size="middle">
           <Link to={`/batch-normative-reference/${r.id}`}>进入</Link>
-          <Popconfirm title="确定删除该批次？" description="删除后不可恢复。" onConfirm={() => void handleDelete(r.id)}>
+          <Popconfirm title="确定删除该任务？" description="删除后不可恢复。" onConfirm={() => void handleDelete(r.id)}>
             <Button type="link" danger size="small">
               删除
             </Button>
@@ -129,11 +151,10 @@ export default function BatchJobListPage() {
     <Space direction="vertical" size={20} style={{ width: '100%' }}>
       <div>
         <Title level={3} style={{ marginBottom: 8 }}>
-          批量合规性评价
+          规范性体检
         </Title>
         <Text type="secondary" style={{ fontSize: 15, lineHeight: 1.7 }}>
-          上传多个企标文件，按批次查看规范性引用查新结果；与「合规性评价」向导任务相互独立。批次标签将按「批次
-          1、批次 2…」在本机自动递增。
+          上传多个企标文件，按批次完成规范性引用查新；与「合规性评价」向导相互独立。创建批次时请填写本次任务名称。
         </Text>
       </div>
 
@@ -141,7 +162,7 @@ export default function BatchJobListPage() {
         <Alert
           type="warning"
           showIcon
-          message="批次列表暂不可用"
+          message="任务列表暂不可用"
           description={
             <span style={{ fontSize: 15 }}>
               {listHint}
@@ -151,7 +172,8 @@ export default function BatchJobListPage() {
                   可尝试
                   <Link to={`/batch-normative-reference/${lastId}`}>
                     {' '}
-                    打开最近一次创建的任务（#{lastId}）
+                    打开最近一次创建的任务
+                    {lastLabel ? `「${lastLabel}」` : ''}
                   </Link>
                   。
                 </span>
@@ -163,9 +185,19 @@ export default function BatchJobListPage() {
 
       <Card title="新建批次" size="small">
         <Space direction="vertical" style={{ width: '100%' }} size={14}>
-          <Text type="secondary" style={{ fontSize: 15 }}>
-            下次创建将使用标签：<Text strong>{getLabelForNextCreate()}</Text>
-          </Text>
+          <div>
+            <Text style={{ fontSize: 15 }}>任务名称</Text>
+            <span style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>
+            <Input
+              style={{ marginTop: 8 }}
+              placeholder="请输入本次体检任务名称，例如：2026 年第 1 批企标体检"
+              value={taskName}
+              maxLength={BATCH_JOB_LABEL_MAX_LEN}
+              showCount
+              onChange={(e) => setTaskName(e.target.value)}
+              onPressEnter={() => void handleCreate()}
+            />
+          </div>
           <Upload.Dragger
             multiple
             fileList={pendingFileList}
@@ -200,12 +232,12 @@ export default function BatchJobListPage() {
             onClearAll={() => setPendingFileList([])}
           />
           <Button type="primary" size="large" loading={creating} onClick={() => void handleCreate()}>
-            创建批量任务并上传
+            创建体检批次并上传
           </Button>
         </Space>
       </Card>
 
-      <Card title="批次列表" size="small">
+      <Card title="任务列表" size="small">
         <Table<BatchNormativeRefJobSummary>
           rowKey="id"
           size="middle"
@@ -222,7 +254,7 @@ export default function BatchJobListPage() {
               setPageSize(ps ?? 20)
             },
           }}
-          locale={{ emptyText: listHint ? '无数据' : '暂无批次记录' }}
+          locale={{ emptyText: listHint ? '无数据' : '暂无任务记录' }}
         />
       </Card>
     </Space>
