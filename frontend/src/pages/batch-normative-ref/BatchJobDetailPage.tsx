@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, Descriptions, Popconfirm, Progress, Space, Table, Tag, Tooltip, Typography, message } from 'antd'
 import dayjs from 'dayjs'
 import type { ColumnsType } from 'antd/es/table'
@@ -6,6 +6,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { BatchNormativeRefItemOut } from '@/types/batch-normative-ref'
 import { fileComplianceOutcomeLabel, parseFileComplianceOutcome } from '@/services/compliance'
 import { deleteBatchNormativeRefJob } from '@/services/batch-normative-reference'
+import {
+  createBatchIndicatorCompareJob,
+  listBatchIndicatorCompareJobs,
+} from '@/services/batch-indicator-compare'
+import type { BatchIndicatorCompareJobSummary } from '@/types/batch-indicator-compare'
 import { useBatchNormativeRefJobPoll } from '@/pages/batch-normative-ref/hooks/useBatchNormativeRefJobPoll'
 import {
   downloadBatchNormativeRefJobReferencesXlsx,
@@ -14,6 +19,7 @@ import {
 } from '@/pages/batch-normative-ref/exportJobReferencesCsv'
 import { resolveBatchJobProgressDisplay, shouldPollBatchNormativeRefJob } from '@/pages/batch-normative-ref/batchJobProgress'
 import { batchItemStatusMeta, batchJobStatusMeta } from '@/pages/batch-normative-ref/batchStatusLabels'
+import { pickQbCode } from '@/pages/batch-normative-ref/itemMetaDisplay'
 import { displayBatchJobLabel } from '@/pages/batch-normative-ref/session'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 
@@ -32,6 +38,54 @@ export default function BatchJobDetailPage() {
   const validId = Number.isFinite(jobId) && jobId > 0 ? jobId : null
   const { job, loading, error } = useBatchNormativeRefJobPoll(validId)
   const [deleting, setDeleting] = useState(false)
+  const [selectedItemIds, setSelectedItemIds] = useState<number[]>([])
+  const [startingCompare, setStartingCompare] = useState(false)
+  const [compareJobs, setCompareJobs] = useState<BatchIndicatorCompareJobSummary[]>([])
+
+  const loadCompareJobs = useCallback(async () => {
+    if (validId == null) return
+    try {
+      const res = await listBatchIndicatorCompareJobs({
+        page: 1,
+        page_size: 10,
+        source_batch_job_id: validId,
+      })
+      setCompareJobs(res.results)
+    } catch {
+      setCompareJobs([])
+    }
+  }, [validId])
+
+  useEffect(() => {
+    void loadCompareJobs()
+  }, [loadCompareJobs])
+
+  const handleStartIndicatorCompare = async () => {
+    if (validId == null) return
+    if (selectedItemIds.length === 0) {
+      message.warning('请先勾选已完成的子项')
+      return
+    }
+    setStartingCompare(true)
+    try {
+      const label = job?.label?.trim()
+        ? `${job.label.trim()} · 指标对比（${selectedItemIds.length} 项）`
+        : `体检批次 #${validId} 指标对比`
+      const created = await createBatchIndicatorCompareJob({
+        source_batch_job_id: validId,
+        source_item_ids: selectedItemIds,
+        label,
+      })
+      message.success('已创建指标对比任务')
+      setSelectedItemIds([])
+      void loadCompareJobs()
+      navigate(`/batch-normative-reference/indicator-compare/${created.id}`)
+    } catch (e) {
+      message.error(getComplianceApiErrorMessage(e))
+    } finally {
+      setStartingCompare(false)
+    }
+  }
 
   const progress = useMemo(() => (job ? resolveBatchJobProgressDisplay(job) : null), [job])
   const isProcessing = job ? shouldPollBatchNormativeRefJob(job) : false
@@ -52,6 +106,13 @@ export default function BatchJobDetailPage() {
 
   const columns: ColumnsType<BatchNormativeRefItemOut> = [
     { title: '顺序', dataIndex: 'sort_order', width: 70 },
+    {
+      title: '企标号',
+      key: 'subject_code',
+      width: 160,
+      ellipsis: true,
+      render: (_, r) => pickQbCode(r) || '—',
+    },
     { title: '文件名', dataIndex: 'original_filename', ellipsis: true },
     {
       title: '状态',
@@ -189,6 +250,25 @@ export default function BatchJobDetailPage() {
                 </Descriptions.Item>
               ) : null}
             </Descriptions>
+            {compareJobs.length > 0 ? (
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary" style={{ fontSize: 14 }}>
+                  指标对比记录：
+                  {compareJobs.slice(0, 3).map((cj, idx) => (
+                    <span key={cj.id}>
+                      {idx > 0 ? '、' : ' '}
+                      <Link to={`/batch-normative-reference/indicator-compare/${cj.id}`}>
+                        #{cj.id}
+                        {cj.label?.trim() ? ` ${cj.label.trim()}` : ''}
+                      </Link>
+                    </span>
+                  ))}
+                  {compareJobs.length > 3 ? (
+                    <Link to="/batch-normative-reference/indicator-compare"> 查看全部</Link>
+                  ) : null}
+                </Text>
+              </div>
+            ) : null}
             <div style={{ marginTop: 16 }}>
               <Space wrap size="middle">
                 <Tooltip
@@ -245,7 +325,20 @@ export default function BatchJobDetailPage() {
             </div>
           </Card>
 
-          <Card title="文件列表" size="small">
+          <Card
+            title="文件列表"
+            size="small"
+            extra={
+              <Button
+                type="primary"
+                disabled={selectedItemIds.length === 0}
+                loading={startingCompare}
+                onClick={() => void handleStartIndicatorCompare()}
+              >
+                对选中项发起指标对比
+              </Button>
+            }
+          >
             <Table<BatchNormativeRefItemOut>
               rowKey="id"
               size="middle"
@@ -253,6 +346,13 @@ export default function BatchJobDetailPage() {
               columns={columns}
               dataSource={job.items}
               pagination={false}
+              rowSelection={{
+                selectedRowKeys: selectedItemIds,
+                onChange: (keys) => setSelectedItemIds(keys.map((k) => Number(k))),
+                getCheckboxProps: (record) => ({
+                  disabled: record.status !== 'completed',
+                }),
+              }}
             />
           </Card>
         </>

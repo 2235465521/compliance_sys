@@ -49,7 +49,9 @@ export function ForwardTab() {
       if (completionRef.current) return
       completionRef.current = true
       const code =
-        String(meta.qb_code ?? meta.enterprise_standard ?? meta.source_bz_id ?? qbCode).trim() ||
+        String(
+          meta.subject_code ?? meta.qb_code ?? meta.enterprise_standard ?? meta.source_bz_id ?? qbCode,
+        ).trim() ||
         forwardFile?.name.replace(/\.[^/.]+$/i, '') ||
         '—'
       applyResult(buildForwardFromLegacyRefs(code, refs))

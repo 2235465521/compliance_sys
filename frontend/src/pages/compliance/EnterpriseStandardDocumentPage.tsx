@@ -44,8 +44,8 @@ export default function EnterpriseStandardDocumentPage() {
 
   const parse = (step1?.parse_result ?? {}) as Record<string, unknown>
   const qbCode = useMemo(
-    () => String(step1?.task.qb_code ?? parse.qb_code ?? '').trim(),
-    [parse.qb_code, step1?.task.qb_code],
+    () => String(step1?.task.subject_code ?? parse.qb_code ?? '').trim(),
+    [parse.qb_code, step1?.task.subject_code],
   )
   const load = useCallback(async () => {
     if (!Number.isFinite(taskId)) return

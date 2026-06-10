@@ -73,7 +73,7 @@ function unwrapData<T>(raw: unknown): T {
 export async function fetchForwardWarningByQb(qbCode: string): Promise<ForwardWarningResponseApi> {
   try {
     const { data } = await warningsClient.get('/warnings/forward-by-qb/', {
-      params: { qb_code: qbCode.trim() },
+      params: { subject_code: qbCode.trim() },
     })
     return unwrapData<ForwardWarningResponseApi>(data)
   } catch (e) {
@@ -87,7 +87,7 @@ export async function fetchForwardWarningByFile(
 ): Promise<ForwardWarningResponseApi> {
   const form = new FormData()
   form.append('file', file, file.name)
-  if (qbCode?.trim()) form.append('qb_code', qbCode.trim())
+  if (qbCode?.trim()) form.append('subject_code', qbCode.trim())
   try {
     const { data } = await warningsClient.post('/warnings/forward-by-file/', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -171,7 +171,7 @@ export async function fetchMonitorEnterpriseDetail(
 ): Promise<ForwardWarningResponseApi> {
   try {
     const { data } = await warningsClient.get('/warnings/monitor/enterprises/detail/', {
-      params: { qb_code: qbCode.trim() },
+      params: { subject_code: qbCode.trim() },
     })
     return unwrapData<ForwardWarningResponseApi>(data)
   } catch (e) {

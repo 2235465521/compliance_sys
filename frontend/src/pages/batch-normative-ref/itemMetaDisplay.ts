@@ -42,9 +42,10 @@ export function pickLocationForItem(item: BatchNormativeRefItemOut | null): stri
   )
 }
 
-/** 企标简称 / 常用名：qb_name 优先，其次 enterprise_standard_name */
+/** 企标简称 / 常用名：STSC `subject_name` 优先，兼容 Dify 旧键 */
 export function pickQbShortName(item: BatchNormativeRefItemOut | null): string {
   return (
+    pickItemStringField(item, ['subject_name', 'subjectName']) ||
     pickItemStringField(item, ['qb_name', 'qbName', 'short_name', 'shortName']) ||
     pickItemStringField(item, ['enterprise_standard_name', 'enterpriseStandardName']) ||
     ''
@@ -54,6 +55,8 @@ export function pickQbShortName(item: BatchNormativeRefItemOut | null): string {
 /** 标准（备案）名称：偏完整标题，与「企标名」行区分 */
 export function pickQbStandardTitle(item: BatchNormativeRefItemOut | null): string {
   return pickItemStringField(item, [
+    'subject_name',
+    'subjectName',
     'qb_title',
     'qbTitle',
     'standard_name',
@@ -67,9 +70,22 @@ export function pickQbStandardTitle(item: BatchNormativeRefItemOut | null): stri
   ]) || ''
 }
 
+/** 企标号（STSC `subject_code`；UI 域内仍称 qbCode） */
 export function pickQbCode(item: BatchNormativeRefItemOut | null): string {
-  return pickItemStringField(item, ['qb_code', 'qbCode', 'enterprise_std_code', 'enterpriseStdCode']) || ''
+  return (
+    pickItemStringField(item, [
+      'subject_code',
+      'subjectCode',
+      'qb_code',
+      'qbCode',
+      'enterprise_std_code',
+      'enterpriseStdCode',
+    ]) || ''
+  )
 }
+
+/** STSC 企标号别名，与 {@link pickQbCode} 等价 */
+export const pickSubjectCode = pickQbCode
 
 /** 实施时间 / 发布实施相关日期 */
 export function pickImplementationDateText(item: BatchNormativeRefItemOut | null): string {

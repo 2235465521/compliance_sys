@@ -28,6 +28,9 @@ import BatchNormativeRefLayout from '@/pages/batch-normative-ref/Layout'
 import BatchJobListPage from '@/pages/batch-normative-ref/BatchJobListPage'
 import BatchJobDetailPage from '@/pages/batch-normative-ref/BatchJobDetailPage'
 import BatchItemReferencePage from '@/pages/batch-normative-ref/BatchItemReferencePage'
+import BatchIndicatorCompareListPage from '@/pages/batch-indicator-compare/BatchIndicatorCompareListPage'
+import BatchIndicatorCompareDetailPage from '@/pages/batch-indicator-compare/BatchIndicatorCompareDetailPage'
+import BatchIndicatorCompareItemPage from '@/pages/batch-indicator-compare/BatchIndicatorCompareItemPage'
 
 export const router = createBrowserRouter([
   {
@@ -62,6 +65,12 @@ export const router = createBrowserRouter([
         element: <BatchNormativeRefLayout />,
         children: [
           { index: true, element: <BatchJobListPage /> },
+          { path: 'indicator-compare', element: <BatchIndicatorCompareListPage /> },
+          {
+            path: 'indicator-compare/:compareJobId/items/:itemId',
+            element: <BatchIndicatorCompareItemPage />,
+          },
+          { path: 'indicator-compare/:compareJobId', element: <BatchIndicatorCompareDetailPage /> },
           { path: ':jobId/items/:itemId', element: <BatchItemReferencePage /> },
           { path: ':jobId', element: <BatchJobDetailPage /> },
         ],

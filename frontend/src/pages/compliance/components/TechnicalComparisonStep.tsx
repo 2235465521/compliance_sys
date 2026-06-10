@@ -640,10 +640,10 @@ export function TechnicalComparisonStep(props: TechnicalComparisonStepProps) {
         styles={{ body: { paddingTop: 12 } }}
       >
         <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
-          构建时将 ③ 表格的「发布时完整号 + 最新标准号」作为 <Text code>compare_pairs</Text> 提交编排（
+          构建时将 ③ 表格各行作为 <Text code>compare_pairs</Text> 提交编排（
           <Text code>POST step/4/indicators/ensure</Text>），再由 <Text code>POST/GET step/5/compare</Text>{' '}
-          触发工作流③：企标指标与发布时点国标拼入 <Text code>enterprise_data</Text>，最新 N+M 侧国标拼入{' '}
-          <Text code>reference_data</Text>。下表解析 <Text code>compare_result.markdown</Text>；「编辑」仅可改指标名称与企标限值。
+          触发工作流③：<strong>企标提取指标</strong>与<strong>最新国标指标</strong>对比（不再将发布时点旧国标指标块送入对比；
+          批量场景不含 M 补充标准）。下表解析 <Text code>compare_result.markdown</Text>；「编辑」仅可改指标名称与企标限值。
         </Text>
         <Table
           rowKey="id"

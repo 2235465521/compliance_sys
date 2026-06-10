@@ -59,14 +59,14 @@ export async function fetchTaskList(params?: {
   page_size?: number
   keyword?: string
   status?: string
-  qb_code?: string
+  subject_code?: string
 }): Promise<{ tasks: NoveltyTask[]; total: number; page: number; page_size: number }> {
   const page = await listNoveltySearchTasks({
     page: params?.page ?? 1,
     page_size: params?.page_size ?? 100,
     keyword: params?.keyword,
     status: params?.status,
-    qb_code: params?.qb_code,
+    subject_code: params?.subject_code,
   })
   const results = Array.isArray(page.results) ? page.results : []
   return {
@@ -89,7 +89,7 @@ export async function fetchTaskById(id: string): Promise<NoveltyTask | null> {
 
 export async function createTaskFromUpload(input: CreateTaskFromUploadInput): Promise<NoveltyTask> {
   const api = await createNoveltySearchTask({
-    qb_code: input.enterpriseStdNo,
+    subject_code: input.enterpriseStdNo,
     source: 'upload',
     file: input.file,
   })
@@ -105,7 +105,7 @@ export async function runNoveltySearchByQbCode(qbCode: string): Promise<NoveltyT
   if (!code) {
     throw new NoveltySearchApiError('请输入企标号', 400)
   }
-  const created = await createNoveltySearchTask({ qb_code: code, source: 'form' })
+  const created = await createNoveltySearchTask({ subject_code: code, source: 'form' })
   const rows = created.reference_sheet ?? []
   const confirmed = await confirmNoveltyReferenceSheet(
     created.id,

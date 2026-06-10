@@ -48,7 +48,7 @@ export default function NoveltyTaskListPage() {
       let res = await fetchTaskList({
         page: reqPage,
         page_size: reqPageSize,
-        qb_code: kw || undefined,
+        subject_code: kw || undefined,
         keyword: kw || undefined,
       })
 
@@ -60,7 +60,7 @@ export default function NoveltyTaskListPage() {
         res = await fetchTaskList({
           page: 1,
           page_size: reqPageSize,
-          qb_code: kw || undefined,
+          subject_code: kw || undefined,
           keyword: kw || undefined,
         })
         if (seq !== listRequestSeq.current) return

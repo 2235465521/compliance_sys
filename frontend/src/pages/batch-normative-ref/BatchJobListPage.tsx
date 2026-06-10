@@ -10,6 +10,7 @@ import {
   deleteBatchNormativeRefJob,
   listBatchNormativeRefJobs,
 } from '@/services/batch-normative-reference'
+import { createBatchIndicatorCompareJob } from '@/services/batch-indicator-compare'
 import { getComplianceApiErrorMessage } from '@/utils/complianceApiError'
 import PendingUploadFileList from '@/pages/batch-normative-ref/components/PendingUploadFileList'
 import { batchJobStatusMeta } from '@/pages/batch-normative-ref/batchStatusLabels'
@@ -34,6 +35,8 @@ export default function BatchJobListPage() {
   const [total, setTotal] = useState(0)
   const [listLoading, setListLoading] = useState(false)
   const [listHint, setListHint] = useState<string | null>(null)
+  const [selectedBatchIds, setSelectedBatchIds] = useState<number[]>([])
+  const [startingCompare, setStartingCompare] = useState(false)
 
   const loadList = useCallback(async () => {
     setListLoading(true)
@@ -86,6 +89,41 @@ export default function BatchJobListPage() {
       message.error(getComplianceApiErrorMessage(e))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleStartIndicatorCompare = async () => {
+    if (selectedBatchIds.length === 0) {
+      message.warning('请先勾选已完成的体检批次')
+      return
+    }
+    setStartingCompare(true)
+    let firstJobId: number | null = null
+    let ok = 0
+    try {
+      for (const batchId of selectedBatchIds) {
+        const row = list.find((r) => r.id === batchId)
+        const label = row?.label?.trim()
+          ? `${row.label.trim()} · 指标对比`
+          : `体检批次 #${batchId} 指标对比`
+        const job = await createBatchIndicatorCompareJob({
+          source_batch_job_id: batchId,
+          label,
+        })
+        if (firstJobId == null) firstJobId = job.id
+        ok += 1
+      }
+      message.success(`已创建 ${ok} 个指标对比任务`)
+      setSelectedBatchIds([])
+      if (ok === 1 && firstJobId != null) {
+        navigate(`/batch-normative-reference/indicator-compare/${firstJobId}`)
+      } else {
+        navigate('/batch-normative-reference/indicator-compare')
+      }
+    } catch (e) {
+      message.error(getComplianceApiErrorMessage(e))
+    } finally {
+      setStartingCompare(false)
     }
   }
 
@@ -155,6 +193,9 @@ export default function BatchJobListPage() {
         </Title>
         <Text type="secondary" style={{ fontSize: 15, lineHeight: 1.7 }}>
           上传多个企标文件，按批次完成规范性引用查新；与「合规性评价」向导相互独立。创建批次时请填写本次任务名称。
+          体检完成后可勾选批次发起「技术指标对比」，或在
+          <Link to="/batch-normative-reference/indicator-compare"> 指标对比记录 </Link>
+          中查看留痕。
         </Text>
       </div>
 
@@ -237,13 +278,38 @@ export default function BatchJobListPage() {
         </Space>
       </Card>
 
-      <Card title="任务列表" size="small">
+      <Card
+        title="任务列表"
+        size="small"
+        extra={
+          <Space wrap>
+            <Button
+              type="primary"
+              disabled={selectedBatchIds.length === 0}
+              loading={startingCompare}
+              onClick={() => void handleStartIndicatorCompare()}
+            >
+              对选中批次发起指标对比
+            </Button>
+            <Link to="/batch-normative-reference/indicator-compare">
+              <Button>指标对比记录</Button>
+            </Link>
+          </Space>
+        }
+      >
         <Table<BatchNormativeRefJobSummary>
           rowKey="id"
           size="middle"
           loading={listLoading}
           columns={columns}
           dataSource={list}
+          rowSelection={{
+            selectedRowKeys: selectedBatchIds,
+            onChange: (keys) => setSelectedBatchIds(keys.map((k) => Number(k))),
+            getCheckboxProps: (record) => ({
+              disabled: record.status !== 'completed',
+            }),
+          }}
           pagination={{
             current: page,
             pageSize,

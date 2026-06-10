@@ -1,21 +1,29 @@
-/** 新后端 `/api/v1/compliance` 契约（见 docs/backend-compliance-API-前端对接手册.md） */
+/** 新后端 `/api/v1/compliance` 契约（STSC L3；见 docs/frontend-STSC-L3-字段迁移清单.md） */
 
 export type ParseStatus = 'pending' | 'running' | 'completed' | 'failed' | string
 
+export type ComplianceDisplayStatus = 'draft' | 'in_progress' | 'completed' | 'failed'
+
 export interface ComplianceTaskOut {
   id: number
-  qb_code: string | null
+  catalog_std_type_no?: string | null
+  subject_code: string | null
+  subject_name?: string | null
+  company_name?: string | null
   current_step: number
   status: string
   uploaded_file_name: string | null
   has_parse_result: boolean
   parse_status: ParseStatus
   parse_error: string | null
-  /** 后端扩展：是否已有 step5 对比快照（见过程控制需求文档） */
   has_compare_result?: boolean
   compare_result_updated_at?: string | null
-  enterprise_name?: string | null
+  step4_indicators_confirmed?: boolean
+  step5_compare_confirmed?: boolean
   updated_at?: string | null
+  progress_percent?: number
+  step_label?: string
+  display_status?: ComplianceDisplayStatus
 }
 
 export interface ModuleMetaOut {
@@ -30,8 +38,8 @@ export interface Step1Out {
 }
 
 export interface Step1ConfirmIn {
-  qb_code: string
-  qb_name?: string | null
+  subject_code: string
+  subject_name?: string | null
   company_name?: string | null
 }
 
@@ -111,7 +119,7 @@ export interface MissingGbFileItem {
 }
 
 export interface Step4IndicatorsOut {
-  qb_code: string | null
+  subject_code: string | null
   enterprise_indicators: unknown[]
   national_by_std_code: Record<string, unknown[]>
   missing_gb_files: MissingGbFileItem[]

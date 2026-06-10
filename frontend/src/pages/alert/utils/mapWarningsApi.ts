@@ -49,8 +49,8 @@ function mapCompareRow(row: WarningCompareRowApi, index: number): WarningCompare
 
 export function mapForwardWarningFromApi(api: ForwardWarningResponseApi): ForwardWarningResult {
   return {
-    qbCode: api.qb_code?.trim() || '—',
-    enterpriseName: api.enterprise_name?.trim() || undefined,
+    qbCode: api.subject_code?.trim() || '—',
+    enterpriseName: api.subject_name?.trim() || undefined,
     taskConclusion: (api.task_conclusion ?? 'partial') as WarningTaskConclusion,
     taskSummary: api.task_summary?.trim() || undefined,
     compareRows: (api.compare_rows ?? []).map(mapCompareRow),
@@ -154,8 +154,8 @@ export function mapReverseWarningFromApi(
       }
     }
     return {
-      qbCode: item.qb_code?.trim() || '—',
-      enterpriseName: item.enterprise_name?.trim() || undefined,
+      qbCode: item.subject_code?.trim() || '—',
+      enterpriseName: item.subject_name?.trim() || undefined,
       needModify: item.enterprise_need_modify ?? gbUpdated,
       conclusionLabel:
         item.enterprise_conclusion_label?.trim() ||
@@ -194,7 +194,7 @@ function mapActiveScanFromApi(api: WarningsActiveScanApi): MonitorActiveScan {
     status: api.status,
     processedCount: api.processed_count ?? 0,
     totalCount: api.total_count ?? 0,
-    currentQbCode: api.current_qb_code ?? null,
+    currentQbCode: api.current_subject_code ?? null,
     phase: api.phase ?? null,
     pauseRequested: api.pause_requested,
     notScannedCount: api.not_scanned_count ?? 0,
@@ -208,7 +208,7 @@ export function mapMonitorSummaryFromApi(api: MonitorSummaryApi): MonitorSummary
   const notScanned = api.not_scanned_count ?? api.pending_count ?? 0
   return {
     lastScanAt: api.last_scan_at ?? undefined,
-    totalEvaluatedQb: api.total_evaluated_qb ?? 0,
+    totalEvaluatedQb: api.total_evaluated ?? 0,
     needAttentionCount: api.need_attention_count ?? 0,
     allOkCount: api.all_ok_count ?? 0,
     noEvalRecordCount: api.no_eval_record_count ?? 0,
@@ -244,8 +244,8 @@ export function mapMonitorEnterpriseItemFromApi(
 ): MonitorEnterpriseItem {
   const monitorStatus = resolveMonitorStatus(item)
   return {
-    qbCode: item.qb_code?.trim() || '—',
-    enterpriseName: item.enterprise_name?.trim() || undefined,
+    qbCode: item.subject_code?.trim() || '—',
+    enterpriseName: item.subject_name?.trim() || undefined,
     monitorStatus,
     taskConclusion: (item.task_conclusion ?? 'partial') as WarningTaskConclusion,
     taskSummary: item.task_summary?.trim() || undefined,

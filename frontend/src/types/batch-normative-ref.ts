@@ -1,4 +1,4 @@
-/** 与 docs/backend-batch-normative-reference-API-前端对接手册.md §3、§6 对齐 */
+/** 与 docs/backend-batch-normative-reference-API-前端对接手册.md §3、§6 及 STSC L3 字段迁移对齐 */
 
 export type BatchNormativeRefJobStatus = 'pending' | 'processing' | 'completed' | 'failed'
 
@@ -11,10 +11,15 @@ export interface BatchNormativeRefItemOut {
   status: BatchNormativeRefItemStatus
   error_message: string | null
   references_resolved: unknown[] | null
-  /** 后端可选：解析得到的企标/企业元数据（与 OpenAPI 对齐后可填） */
+  /** 后端可选：解析得到的企标/企业元数据（STSC L3；与 OpenAPI 对齐） */
+  subject_code?: string | null
+  subject_name?: string | null
   company_name?: string | null
+  catalog_std_type_no?: string | null
+  /** @deprecated 旧 v1 字段，后端 STSC 切换后不再返回；读取时请优先 `subject_code` */
   qb_name?: string | null
   enterprise_standard_name?: string | null
+  /** @deprecated 旧 v1 字段，请优先 `subject_code` */
   qb_code?: string | null
   /** 企标标准全名 / 备案名称（后端字段名以 OpenAPI 为准） */
   qb_title?: string | null

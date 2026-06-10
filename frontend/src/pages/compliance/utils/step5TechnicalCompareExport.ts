@@ -17,8 +17,7 @@ export type Step5WorkbookExportInput = {
   comparePreview: ComparePreviewRow[]
 }
 
-const SHEET1_SECTION_QB = 'A. 企标指标（第3步审核后）'
-const SHEET1_SECTION_PUB_GB = 'B. 发布时点引用国标指标'
+const SHEET1_SECTION_QB = '企标指标（第3步审核后）'
 
 type FlatNationalIndicatorRow = {
   indexName: string
@@ -56,60 +55,23 @@ function flattenStdIndicators(stdCode: string, rawRows: unknown[] | undefined): 
   return out
 }
 
-function buildSheet1EnterpriseAndPublicationRows(input: Step5WorkbookExportInput): (string | number)[][] {
-  const { enterpriseBzId, enterpriseQbIndicators, comparableReferences, nationalByStdCode } = input
+function buildSheet1EnterpriseRows(input: Step5WorkbookExportInput): (string | number)[][] {
+  const { enterpriseBzId, enterpriseQbIndicators } = input
   const qb = enterpriseBzId.trim() || '—'
   const rows: (string | number)[][] = []
   const approved = filterApprovedEnterpriseIndicators(enterpriseQbIndicators)
 
   if (approved.length === 0) {
-    rows.push([SHEET1_SECTION_QB, qb, '—', '—', '—', '—', '—', '—', '（暂无已审核通过的企标指标）'])
+    rows.push([SHEET1_SECTION_QB, qb, '—', '—', '—', '（暂无已审核通过的企标指标）'])
   } else {
     for (const item of approved) {
       rows.push([
         SHEET1_SECTION_QB,
         qb,
-        '—',
-        '—',
-        '—',
         item.indicatorName.trim() || '—',
         '—',
         item.indicatorValue.trim() || '—',
         item.statusText.trim() || '—',
-      ])
-    }
-  }
-
-  for (const ref of comparableReferences) {
-    const pub = (ref.historicalFullStdCode ?? '').trim()
-    const latest = ref.currentLatestId.trim()
-    const query = ref.queryBzId.trim()
-    const indicators = flattenStdIndicators(pub, nationalByStdCode[pub])
-    if (indicators.length === 0) {
-      rows.push([
-        SHEET1_SECTION_PUB_GB,
-        qb,
-        query || '—',
-        pub || '—',
-        latest || '—',
-        '—',
-        '—',
-        '（暂无国标指标数据）',
-        '—',
-      ])
-      continue
-    }
-    for (const ind of indicators) {
-      rows.push([
-        SHEET1_SECTION_PUB_GB,
-        qb,
-        query || '—',
-        pub || '—',
-        latest || '—',
-        ind.indexName,
-        ind.indexType,
-        ind.content,
-        '—',
       ])
     }
   }
@@ -141,8 +103,8 @@ function addSheet(
 }
 
 /**
- * 导出第五步技术指标对比工作簿（3 个子表）。
- * 子表1：企标指标（第3步审核）+ 发布时点引用国标指标。
+ * 导出第五步技术指标对比工作簿。
+ * 子表1：企标指标（第3步审核）；对比模型不再导出发布时点旧国标指标块。
  */
 export async function downloadStep5TechnicalCompareWorkbook(
   input: Step5WorkbookExportInput,
@@ -155,14 +117,11 @@ export async function downloadStep5TechnicalCompareWorkbook(
   const { enterpriseBzId, comparableReferences, supplementStdCodes, nationalByStdCode, comparePreview } =
     input
 
-  const sheet1Rows = buildSheet1EnterpriseAndPublicationRows(input)
+  const sheet1Rows = buildSheet1EnterpriseRows(input)
 
-  addSheet(workbook, '企标与发布时点指标', [
+  addSheet(workbook, '企标指标', [
     '数据分区',
     '企标号',
-    '企标引用标准号',
-    '发布时引用完整国标号',
-    '最新标准号',
     '指标名称',
     '类型',
     '指标内容',

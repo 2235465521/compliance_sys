@@ -126,7 +126,7 @@ export default function ComplianceTaskHub() {
   const columns: ColumnsType<ComplianceTaskOut> = [
     {
       title: '企标号',
-      dataIndex: 'qb_code',
+      dataIndex: 'subject_code',
       render: (v: string | null) => v?.trim() || '—',
     },
     {

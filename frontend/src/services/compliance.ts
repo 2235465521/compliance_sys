@@ -561,8 +561,12 @@ export function mapEvaluationTaskOut(item: import('@/types/compliance-api').Comp
   const progress = Math.min(100, Math.round((item.current_step / 6) * 100))
   return {
     id: String(item.id),
-    name: item.qb_code?.trim() || item.uploaded_file_name || `合规评价 #${item.id}`,
-    enterprise: item.enterprise_name?.trim() || item.uploaded_file_name || '-',
+    name: item.subject_code?.trim() || item.uploaded_file_name || `合规评价 #${item.id}`,
+    enterprise:
+      item.company_name?.trim() ||
+      item.subject_name?.trim() ||
+      item.uploaded_file_name ||
+      '-',
     status,
     progress,
     createTime: '',
@@ -738,7 +742,7 @@ function step4ToNationalItems(s4: Step4IndicatorsOut, filterStd?: string): Natio
     seq += 1
     out.push({
       id: String(r.id ?? `ent-${seq}`),
-      standardId: s4.qb_code || 'enterprise',
+      standardId: s4.subject_code || 'enterprise',
       indexName: String(r.name ?? r.indicator_name ?? '-'),
       indexValue: String(r.value ?? r.indicator_value ?? r.specific_indicator_value ?? '-'),
     })
@@ -864,14 +868,14 @@ export const getPendingIndexes = async (): Promise<GetPendingIndexesResponse> =>
     const task = await getEvaluation(id)
     const s1 = await getStep1(id)
     const pr = s1.parse_result as Record<string, unknown> | null
-    const qb = String(pr?.qb_code ?? s1.task.qb_code ?? '企标')
+    const qb = String(pr?.qb_code ?? s1.task.subject_code ?? '企标')
     const fromParseIndicators = parseResultToPending(pr, qb)
     const refFromParse = mapReferencesDetailFromParse(pr)
 
     if (task.current_step >= 2) {
       try {
         const s2 = await getStep2(id)
-        const qb2 = String(s2.task.qb_code ?? task.qb_code ?? qb)
+        const qb2 = String(s2.task.subject_code ?? task.subject_code ?? qb)
         const refItems = mapSuggestedReferencesToPendingExtracts(s2.suggested_references ?? [])
         let indItems = mapIndicatorsArrayToPending(
           (s2.indicators ?? []) as Array<Record<string, unknown>>,
@@ -1184,7 +1188,7 @@ function enterpriseRowsToIndexItems(s4: Step4IndicatorsOut): NationalIndexItem[]
     seq += 1
     out.push({
       id: String(r.id ?? `ent-${seq}`),
-      standardId: s4.qb_code || 'enterprise',
+      standardId: s4.subject_code || 'enterprise',
       indexName: String(r.name ?? r.indicator_name ?? '-'),
       indexValue: String(r.value ?? r.indicator_value ?? r.specific_indicator_value ?? '-'),
     })

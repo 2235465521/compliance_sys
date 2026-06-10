@@ -57,8 +57,10 @@ export async function hydrateDescriptiveFromStep1(taskId: number): Promise<{
 }> {
   const step1 = await getStep1(taskId)
   const parse = (step1.parse_result ?? {}) as Record<string, unknown>
-  const qb = String(step1.task.qb_code ?? parse.qb_code ?? '').trim()
-  const enterpriseName = String(parse.company_name ?? parse.qb_name ?? '').trim()
+  const qb = String(step1.task.subject_code ?? parse.qb_code ?? '').trim()
+  const enterpriseName = String(
+    step1.task.company_name ?? parse.company_name ?? parse.qb_name ?? '',
+  ).trim()
   return { bzId: qb, enterpriseName }
 }
 

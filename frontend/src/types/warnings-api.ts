@@ -32,8 +32,8 @@ export interface WarningSourceEvaluationApi {
 }
 
 export interface ForwardWarningResponseApi {
-  qb_code: string
-  enterprise_name?: string | null
+  subject_code: string
+  subject_name?: string | null
   task_conclusion: WarningTaskConclusionApi
   task_summary?: string | null
   compare_rows: WarningCompareRowApi[]
@@ -48,8 +48,8 @@ export interface ReverseGbNoveltyApi {
 }
 
 export interface ReverseAffectedEnterpriseApi {
-  qb_code: string
-  enterprise_name?: string | null
+  subject_code: string
+  subject_name?: string | null
   enterprise_need_modify?: boolean
   enterprise_conclusion_label?: string
   summary?: string | null
@@ -71,7 +71,7 @@ export interface WarningsActiveScanApi {
   status: 'running' | 'paused'
   processed_count: number
   total_count: number
-  current_qb_code: string | null
+  current_subject_code: string | null
   /** not_scanned | all_ok | null */
   phase: string | null
   pause_requested?: boolean
@@ -83,7 +83,7 @@ export interface WarningsActiveScanApi {
 
 export interface MonitorSummaryApi {
   last_scan_at?: string | null
-  total_evaluated_qb: number
+  total_evaluated: number
   need_attention_count: number
   /** 含 all_ok + partial */
   all_ok_count: number
@@ -111,8 +111,8 @@ export type MonitorEnterpriseMonitorStatusApi =
   | 'not_scanned'
 
 export interface MonitorEnterpriseListItemApi {
-  qb_code: string
-  enterprise_name?: string | null
+  subject_code: string
+  subject_name?: string | null
   /** 与 monitor_status 分类一致；列表展示优先 monitor_status */
   monitor_status?: MonitorEnterpriseMonitorStatusApi
   task_conclusion: WarningTaskConclusionApi

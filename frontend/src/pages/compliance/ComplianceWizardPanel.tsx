@@ -753,7 +753,7 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
         setCurrent(maxIdx)
         applyServerConfirmedAuditFlags(ev.current_step)
 
-        const qb = ev.qb_code?.trim() ?? ''
+        const qb = ev.subject_code?.trim() ?? ''
         if (qb) {
           setLatestUploadedBzId(qb)
           setLatestUploadedBzIds([qb])
@@ -1658,9 +1658,9 @@ const ComplianceWizardPanel = forwardRef<ComplianceWizardPanelHandle, Compliance
               return
             }
             await confirmEvaluationAuditStep1(tid, {
-              qb_code: bzId,
+              subject_code: bzId,
+              subject_name: null,
               company_name: enterpriseName || null,
-              qb_name: null,
             })
           } catch (error) {
             messageApi.error(getComplianceApiErrorMessage(error))

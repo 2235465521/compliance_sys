@@ -138,7 +138,7 @@ export default function NoveltyCreateTaskPage() {
       <Card bordered={false}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16, fontSize: 13 }}>
           接口：<Typography.Text code>POST /api/v1/novelty-search/tasks</Typography.Text>
-          （multipart，必填 <Typography.Text code>qb_code</Typography.Text>
+          （multipart，必填 <Typography.Text code>subject_code</Typography.Text>
           ）。创建成功后状态为「待确认专用表」，无需轮询。
         </Typography.Paragraph>
 

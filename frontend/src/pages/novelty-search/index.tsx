@@ -50,7 +50,7 @@ export default function NoveltySearchPage() {
       const res = await fetchTaskList({
         page: historyPage,
         page_size: historyPageSize,
-        qb_code: historyKeyword || undefined,
+        subject_code: historyKeyword || undefined,
         keyword: historyKeyword || undefined,
       })
       if (seq !== historySeq.current) return
@@ -105,7 +105,7 @@ export default function NoveltySearchPage() {
       const hist = await fetchTaskList({
         page: 1,
         page_size: historyPageSize,
-        qb_code: code,
+        subject_code: code,
         keyword: code,
       })
       setHistory(hist.tasks)
@@ -133,7 +133,7 @@ export default function NoveltySearchPage() {
       const res = await fetchTaskList({
         page: historyPage,
         page_size: historyPageSize,
-        qb_code: historyKeyword || undefined,
+        subject_code: historyKeyword || undefined,
         keyword: historyKeyword || undefined,
       })
       if (res.tasks.length === 0 && res.total > 0 && historyPage > 1) {

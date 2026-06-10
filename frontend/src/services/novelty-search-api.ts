@@ -52,14 +52,14 @@ export async function getNoveltySearchModuleMeta(): Promise<NoveltyModuleMetaApi
   }
 }
 
-/** POST /tasks：仅 multipart，必填 qb_code；可选 source、file */
+/** POST /tasks：仅 multipart，必填 subject_code；可选 source、file */
 export async function createNoveltySearchTask(input: {
-  qb_code: string
+  subject_code: string
   source?: 'upload' | 'form' | 'national'
   file?: File
 }): Promise<NoveltyTaskOutApi> {
   const form = new FormData()
-  form.append('qb_code', input.qb_code.trim())
+  form.append('subject_code', input.subject_code.trim())
   form.append('source', input.source ?? 'upload')
   if (input.file) form.append('file', input.file, input.file.name)
   try {
@@ -76,7 +76,7 @@ export async function createNoveltySearchTask(input: {
 export async function listNoveltySearchTasks(params: {
   page?: number
   page_size?: number
-  qb_code?: string
+  subject_code?: string
   status?: string
   keyword?: string
 }): Promise<NoveltyTaskListPageApi> {
@@ -85,9 +85,9 @@ export async function listNoveltySearchTasks(params: {
       page: params.page ?? 1,
       page_size: params.page_size ?? 20,
     }
-    const term = (params.qb_code ?? params.keyword ?? '').trim()
+    const term = (params.subject_code ?? params.keyword ?? '').trim()
     if (term) {
-      query.qb_code = term
+      query.subject_code = term
       query.keyword = term
     }
     if (params.status?.trim()) query.status = params.status.trim()

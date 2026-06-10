@@ -101,8 +101,8 @@ export function mapNoveltyTaskFromApi(api: NoveltyTaskOutApi): NoveltyTask {
   return {
     id,
     title: api.title,
-    enterpriseName: api.enterprise_name?.trim() || '',
-    enterpriseStdNo: api.qb_code?.trim() || '—',
+    enterpriseName: api.subject_name?.trim() || '',
+    enterpriseStdNo: api.subject_code?.trim() || '—',
     status: mapStatus(api.status),
     source: api.source,
     fileName: api.file_name?.trim() || undefined,
@@ -134,8 +134,8 @@ export function mapNoveltyTaskSummaryFromApi(api: NoveltyTaskSummaryOutApi): Nov
   return {
     id: String(api.id),
     title: api.title,
-    enterpriseName: '',
-    enterpriseStdNo: api.qb_code?.trim() || '—',
+    enterpriseName: api.subject_name?.trim() || '',
+    enterpriseStdNo: api.subject_code?.trim() || '—',
     status: mapStatus(api.status),
     source: api.source,
     createdAt: api.created_at,

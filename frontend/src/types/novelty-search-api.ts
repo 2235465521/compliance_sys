@@ -75,8 +75,8 @@ export interface NoveltyIndicatorsApi {
 export interface NoveltyTaskOutApi {
   id: number | string
   title: string
-  qb_code: string
-  enterprise_name?: string | null
+  subject_code: string
+  subject_name?: string | null
   status: NoveltyTaskStatusApi
   source: NoveltyTaskSourceApi
   file_name?: string | null
@@ -99,7 +99,8 @@ export interface NoveltyTaskOutApi {
 export interface NoveltyTaskSummaryOutApi {
   id: number | string
   title: string
-  qb_code: string
+  subject_code: string
+  subject_name?: string | null
   status: NoveltyTaskStatusApi
   source: NoveltyTaskSourceApi
   task_conclusion?: NoveltyTaskConclusionApi | null
