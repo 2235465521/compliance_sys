@@ -1,31 +1,102 @@
-from django.db import models
+from django.db import connection, models
 
 
 class NationalStandardBasic(models.Model):
-    """国标基础信息主表（对齐 v1.0-sql national_standard_basic）。"""
+    """国标基础信息主表（已映射到只读的 std_base 表以支持 47万+ 数据，禁止修改数据库结构）。"""
 
-    std_code = models.CharField("国标号", max_length=128, unique=True, db_index=True)
-    std_name = models.TextField("标准名称", null=True, blank=True)
+    std_code = models.CharField("国标号", max_length=128, unique=True, db_index=True, db_column="std_id")
+    std_name = models.TextField("标准名称", null=True, blank=True, db_column="std_chinesename")
     std_status = models.CharField("标准状态", max_length=128, null=True, blank=True)
-    publish_date = models.DateField("发布日期", null=True, blank=True)
-    effective_date = models.DateField("实施日期", null=True, blank=True)
-    abolition_date = models.DateField("废止日期", null=True, blank=True)
-    std_category = models.CharField("标准类别", max_length=64, null=True, blank=True)
-    replaces_std_code = models.TextField("代替标准", null=True, blank=True)
-    replace_type = models.CharField("代替类型", max_length=64, null=True, blank=True)
-    ccs_code = models.CharField("中国标准分类号", max_length=64, null=True, blank=True)
-    ics_code = models.CharField("国际标准分类号", max_length=64, null=True, blank=True)
-    ped_id = models.TextField("谱系号", null=True, blank=True)
-    detail_url = models.TextField("详情链接", null=True, blank=True)
-    std_file_path = models.TextField("国标文件保存路径", null=True, blank=True)
+    publish_date = models.DateField("发布日期", null=True, blank=True, db_column="release_date")
+    effective_date = models.DateField("实施日期", null=True, blank=True, db_column="implement_date")
+    abolition_date = models.DateField("废止日期", null=True, blank=True, db_column="abolish_date")
+    std_category = models.CharField("标准类别", max_length=64, null=True, blank=True, db_column="std_type")
 
     class Meta:
-        db_table = "national_standard_basic"
+        managed = False
+        db_table = "std_base"
         verbose_name = "国标基础信息"
         verbose_name_plural = verbose_name
 
     def __str__(self) -> str:
         return f"{self.std_code}"
+
+    @property
+    def replaces_std_code(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT replace_std_name FROM std_replace WHERE base_id = %s LIMIT 1", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def replace_type(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT replace_type FROM std_replace WHERE base_id = %s LIMIT 1", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def ccs_code(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT ccs_code FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def ics_code(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT ics_code FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def ped_id(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT ped_id FROM std_pedigree WHERE base_id = %s LIMIT 1", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def detail_url(self) -> str | None:
+        return None
+
+    @property
+    def std_file_path(self) -> str | None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT MIN(file_path) FROM std_filepath WHERE base_id = %s", [self.id])
+            row = cursor.fetchone()
+        return row[0] if row else None
+
+    @property
+    def extension_row(self):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT responsible_unit, secondary_responsible_unit, issuing_department,
+                       executing_unit, technical_committee, governing_department,
+                       adoption_status, drafting_unit, drafter
+                FROM std_gb_detail
+                WHERE base_id = %s
+                LIMIT 1
+                """,
+                [self.id],
+            )
+            row = cursor.fetchone()
+        if not row:
+            return None
+
+        class DummyExtension:
+            def __init__(self, r):
+                self.responsible_unit = r[0]
+                self.secondary_responsible_unit = r[1]
+                self.issuing_department = r[2]
+                self.executing_unit = r[3]
+                self.technical_committee = r[4]
+                self.governing_department = r[5]
+                self.adoption_status = r[6]
+                self.drafting_unit = r[7]
+                self.drafter = r[8]
+        return DummyExtension(row)
 
 
 class NationalStandardExtension(models.Model):
