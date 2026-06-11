@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Django
+*.log
+db.sqlite3
+staticfiles/
+media/
+.env
+.env.local
+
+# Local scratch
+backend/tmp_batch_import_test.csv
+
+# 本地从大数据 dump 抽出的 INSERT，体积大，勿入库
+v1.0-sql/std_scope_inserts_only.sql
+
+# IDE
+.idea/
+.vscode/
+*.swp

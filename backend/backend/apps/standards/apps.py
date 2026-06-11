@@ -1,0 +1,8 @@
+from django.apps import AppConfig
+
+
+class StandardsConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.standards"
+    label = "standards"
+    verbose_name = "标准库管理（8.1）"

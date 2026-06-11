@@ -1,0 +1,80 @@
+{
+  "id": 2,
+  "title": "Q/MPSTC 0010-2018 2026-05-28",
+  "qb_code": "Q/MPSTC 0010-2018",
+  "enterprise_name": null,
+  "status": "completed",
+  "source": "upload",
+  "file_name": null,
+  "sheet_confirmed": true,
+  "task_conclusion": "all_unchanged",
+  "task_summary": "共 2 条引用，全部无变化",
+  "compare_done": 2,
+  "compare_total": 2,
+  "report_state": "none",
+  "created_at": "2026-05-28T14:03:08.788753Z",
+  "updated_at": "2026-05-28T14:03:09.103554Z",
+  "error_summary": null,
+  "report_generated_at": null,
+  "reference_sheet": [
+    {
+      "id": "1",
+      "std_no": "GB/T 1184-1996",
+      "std_name": "形状和位置公差  未注公差值",
+      "tech_fragment": null,
+      "remark": ""
+    },
+    {
+      "id": "2",
+      "std_no": "GB/T 1804-2000",
+      "std_name": "一般公差 未注公差的线性和角度尺寸的公差",
+      "tech_fragment": null,
+      "remark": ""
+    }
+  ],
+  "compare_rows": [
+    {
+      "id": "1",
+      "sheet_row_id": "1",
+      "referenced_std_code": "GB/T 1184-1996",
+      "full_std_at_publication": "GB/T 1184-1996",
+      "baseline_latest_std_primary": null,
+      "current_latest_std_primary": "GB/T 1184-1996",
+      "row_conclusion": "first_record",
+      "row_conclusion_label": "首次建立基线",
+      "compliance_assessable": true,
+      "explanation": "{[-1]:{GB/T 1184-1996}}、{[1]:{GB 1184-1980}}",
+      "baseline_source": null,
+      "baseline_recorded_at": null
+    },
+    {
+      "id": "2",
+      "sheet_row_id": "2",
+      "referenced_std_code": "GB/T 1804-2000",
+      "full_std_at_publication": "GB/T 1804-2000",
+      "baseline_latest_std_primary": null,
+      "current_latest_std_primary": "GB/T 1804-2000",
+      "row_conclusion": "first_record",
+      "row_conclusion_label": "首次建立基线",
+      "compliance_assessable": true,
+      "explanation": "{[-1]:{GB/T 1804-2000}}、{[1,1]:{GB/T 1804-1992、GB/T 11335-1989}}",
+      "baseline_source": null,
+      "baseline_recorded_at": null
+    }
+  ],
+  "source_evaluations": [
+    {
+      "source_type": "batch",
+      "source_id": 2268,
+      "evaluated_at": "2026-05-27T05:35:27.825442+00:00",
+      "title": "批量规范性引用子项 #2268"
+    },
+    {
+      "source_type": "batch",
+      "source_id": 1237,
+      "evaluated_at": "2026-05-15T04:58:56.307852+00:00",
+      "title": "批量规范性引用子项 #1237"
+    }
+  ],
+  "indicators_available": true
+}
