@@ -1,8 +1,8 @@
-from django.db import connection, models
+from django.db import models
 
 
 class NationalStandardBasic(models.Model):
-    """国标基础信息主表（已映射到只读的 std_base 表以支持 47万+ 数据，禁止修改数据库结构）。"""
+    """国标基础信息主表（对齐 STSC std_base 表，只读）。"""
 
     std_code = models.CharField("国标号", max_length=128, unique=True, db_index=True, db_column="std_id")
     std_name = models.TextField("标准名称", null=True, blank=True, db_column="std_chinesename")
@@ -11,6 +11,7 @@ class NationalStandardBasic(models.Model):
     effective_date = models.DateField("实施日期", null=True, blank=True, db_column="implement_date")
     abolition_date = models.DateField("废止日期", null=True, blank=True, db_column="abolish_date")
     std_category = models.CharField("标准类别", max_length=64, null=True, blank=True, db_column="std_type")
+    ex_state = models.IntegerField("扩展状态", null=True, blank=True)
 
     class Meta:
         managed = False
@@ -23,38 +24,45 @@ class NationalStandardBasic(models.Model):
 
     @property
     def replaces_std_code(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
-            cursor.execute("SELECT replace_std_name FROM std_replace WHERE base_id = %s LIMIT 1", [self.id])
-            row = cursor.fetchone()
-        return row[0] if row else None
+            cursor.execute("SELECT replace_std_name FROM std_replace WHERE base_id = %s", [self.id])
+            rows = cursor.fetchall()
+            if not rows:
+                return None
+            return ", ".join(r[0] for r in rows if r[0])
 
     @property
     def replace_type(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
             cursor.execute("SELECT replace_type FROM std_replace WHERE base_id = %s LIMIT 1", [self.id])
             row = cursor.fetchone()
-        return row[0] if row else None
+            return str(row[0]) if row and row[0] is not None else None
 
     @property
     def ccs_code(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
-            cursor.execute("SELECT ccs_code FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
+            cursor.execute("SELECT ccs FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
             row = cursor.fetchone()
-        return row[0] if row else None
+            return row[0] if row else None
 
     @property
     def ics_code(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
-            cursor.execute("SELECT ics_code FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
+            cursor.execute("SELECT ics FROM std_gb_detail WHERE base_id = %s LIMIT 1", [self.id])
             row = cursor.fetchone()
-        return row[0] if row else None
+            return row[0] if row else None
 
     @property
     def ped_id(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
             cursor.execute("SELECT ped_id FROM std_pedigree WHERE base_id = %s LIMIT 1", [self.id])
             row = cursor.fetchone()
-        return row[0] if row else None
+            return row[0] if row else None
 
     @property
     def detail_url(self) -> str | None:
@@ -62,69 +70,50 @@ class NationalStandardBasic(models.Model):
 
     @property
     def std_file_path(self) -> str | None:
+        from django.db import connection
         with connection.cursor() as cursor:
             cursor.execute("SELECT MIN(file_path) FROM std_filepath WHERE base_id = %s", [self.id])
             row = cursor.fetchone()
-        return row[0] if row else None
-
-    @property
-    def extension_row(self):
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT responsible_unit, secondary_responsible_unit, issuing_department,
-                       executing_unit, technical_committee, governing_department,
-                       adoption_status, drafting_unit, drafter
-                FROM std_gb_detail
-                WHERE base_id = %s
-                LIMIT 1
-                """,
-                [self.id],
-            )
-            row = cursor.fetchone()
-        if not row:
-            return None
-
-        class DummyExtension:
-            def __init__(self, r):
-                self.responsible_unit = r[0]
-                self.secondary_responsible_unit = r[1]
-                self.issuing_department = r[2]
-                self.executing_unit = r[3]
-                self.technical_committee = r[4]
-                self.governing_department = r[5]
-                self.adoption_status = r[6]
-                self.drafting_unit = r[7]
-                self.drafter = r[8]
-        return DummyExtension(row)
+            return row[0] if row else None
 
 
 class NationalStandardExtension(models.Model):
-    """国标扩展信息（对齐 v1.0-sql national_standard_extension，主键国标号）。"""
+    """国标扩展信息（对齐 STSC std_gb_detail 表，只读）。"""
 
     national_standard = models.OneToOneField(
         NationalStandardBasic,
         on_delete=models.CASCADE,
-        to_field="std_code",
-        db_column="std_code",
+        to_field="id",
+        db_column="base_id",
         primary_key=True,
         parent_link=False,
         related_name="extension_row",
     )
-    responsible_unit = models.TextField("归口单位/部门", null=True, blank=True)
-    secondary_responsible_unit = models.TextField("副归口单位", null=True, blank=True)
-    issuing_department = models.TextField("颁发部门", null=True, blank=True)
-    executing_unit = models.TextField("执行单位", null=True, blank=True)
-    technical_committee = models.TextField("技术委员会", null=True, blank=True)
-    governing_department = models.TextField("主管部门", null=True, blank=True)
-    adoption_status = models.TextField("采标情况", null=True, blank=True)
-    drafting_unit = models.TextField("起草单位", null=True, blank=True)
-    drafter = models.TextField("起草人", null=True, blank=True)
+    responsible_unit = models.TextField("归口单位/部门", null=True, blank=True, db_column="report_unit")
+    secondary_responsible_unit = models.TextField("副归口单位", null=True, blank=True, db_column="sub_report_unit")
+    executing_unit = models.TextField("执行单位", null=True, blank=True, db_column="implementing_unit")
+    technical_committee = models.TextField("技术委员会", null=True, blank=True, db_column="technical_committee")
+    governing_department = models.TextField("主管部门", null=True, blank=True, db_column="department_in_charge")
+    adoption_status = models.TextField("采标情况", null=True, blank=True, db_column="adopt_status")
+    drafter = models.TextField("起草人", null=True, blank=True, db_column="drafter")
 
     class Meta:
-        db_table = "national_standard_extension"
+        managed = False
+        db_table = "std_gb_detail"
         verbose_name = "国标扩展信息"
         verbose_name_plural = verbose_name
+
+    @property
+    def issuing_department(self) -> str | None:
+        return self.governing_department
+
+    @property
+    def drafting_unit(self) -> str | None:
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT draft_unit FROM std_extend_h WHERE base_id = %s LIMIT 1", [self.pk])
+            row = cursor.fetchone()
+            return row[0] if row else None
 
 
 class IcsIndustryClassification(models.Model):
